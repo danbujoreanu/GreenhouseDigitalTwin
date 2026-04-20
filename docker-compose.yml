@@ -1,0 +1,82 @@
+version: "3.8"
+
+# Maynooth Homestead — Digital Twin Stack
+# InfluxDB + Grafana + Ecowitt Cloud Poller
+#
+# Usage:
+#   1. Copy .env.example → .env and fill in your values
+#   2. docker compose up -d
+#   3. Grafana: http://localhost:3000 (admin / see .env)
+#   4. InfluxDB: http://localhost:8086
+#
+# Phase 1 (now): Ecowitt Cloud API polling every 5 min (works from anywhere)
+# Phase 2 (June, Mac Mini): GW3000 Customized Upload → Flask ingestion (LAN only)
+
+services:
+
+  # ── InfluxDB 2.x ─────────────────────────────────────────────────────────────
+  influxdb:
+    image: influxdb:2.7-alpine
+    container_name: gh_influxdb
+    restart: unless-stopped
+    ports:
+      - "8086:8086"
+    volumes:
+      - influxdb_data:/var/lib/influxdb2
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=${INFLUX_USER}
+      - DOCKER_INFLUXDB_INIT_PASSWORD=${INFLUX_PASSWORD}
+      - DOCKER_INFLUXDB_INIT_ORG=${INFLUX_ORG}
+      - DOCKER_INFLUXDB_INIT_BUCKET=${INFLUX_BUCKET}
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=${INFLUX_TOKEN}
+    healthcheck:
+      test: ["CMD", "influx", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Grafana ───────────────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:latest
+    container_name: gh_grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+      - GF_FEATURE_TOGGLES_ENABLE=publicDashboards
+      - INFLUX_TOKEN=${INFLUX_TOKEN}
+      - INFLUX_ORG=${INFLUX_ORG}
+      - INFLUX_BUCKET=${INFLUX_BUCKET}
+    depends_on:
+      influxdb:
+        condition: service_healthy
+
+  # ── Ecowitt Cloud Poller ─────────────────────────────────────────────────────
+  # Polls Ecowitt Cloud API every 5 min → calculates LVPD → writes to InfluxDB
+  # Works from ANYWHERE (no LAN access to GH required)
+  poller:
+    build: ./poller
+    container_name: gh_poller
+    restart: unless-stopped
+    environment:
+      - ECOWITT_APPLICATION_KEY=${ECOWITT_APPLICATION_KEY}
+      - ECOWITT_API_KEY=${ECOWITT_API_KEY}
+      - ECOWITT_DEVICE_MAC=${ECOWITT_DEVICE_MAC}
+      - INFLUX_URL=http://influxdb:8086
+      - INFLUX_TOKEN=${INFLUX_TOKEN}
+      - INFLUX_ORG=${INFLUX_ORG}
+      - INFLUX_BUCKET=${INFLUX_BUCKET}
+      - POLL_INTERVAL_SECONDS=300
+    depends_on:
+      influxdb:
+        condition: service_healthy
+
+volumes:
+  influxdb_data:
+  grafana_data:
