@@ -18,7 +18,8 @@ import math
 import logging
 import requests
 from datetime import datetime, timezone
-from influxdb_client import InfluxDBClient, Point, WritePrecision
+from influxdb_client import InfluxDBClient, Point
+WritePrecision_S = "s"  # influxdb-client >=1.36 dropped the SECONDS constant
 from influxdb_client.client.write_api import SYNCHRONOUS
 
 logging.basicConfig(
@@ -150,7 +151,7 @@ def parse_and_build_points(data: dict) -> list[Point]:
             .tag("location", "garden_outside")
             .field("temperature_c", out_temp)
             .field("humidity_pct", out_rh)
-            .time(ts, WritePrecision.SECONDS)
+            .time(ts, WritePrecision_S)
         )
         points.append(p)
 
@@ -175,7 +176,7 @@ def parse_and_build_points(data: dict) -> list[Point]:
             .field("humidity_pct", gh_rh)
             .field("lvpd_kpa", lvpd_val)
             .field("lvpd_zone", zone)
-            .time(ts, WritePrecision.SECONDS)
+            .time(ts, WritePrecision_S)
         )
         points.append(p)
         log.info(
@@ -205,7 +206,7 @@ def parse_and_build_points(data: dict) -> list[Point]:
                 .tag("sensor", "WH51")
                 .tag("zone", label)
                 .field("moisture_pct", moisture)
-                .time(ts, WritePrecision.SECONDS)
+                .time(ts, WritePrecision_S)
             )
             points.append(p)
             log.info("Soil %s → %.0f%%", label, moisture)
