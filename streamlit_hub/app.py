@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 
 # ── Path resolution ───────────────────────────────────────────────────────────
 ROOT = Path(__file__).parent.parent        # -> digital_twin/
-SEASON = ROOT.parent.parent.parent / "Season"  # -> Gardening/Season/
+SEASON = ROOT.parent.parent / "Season"     # -> Gardening/Season/
 load_dotenv(ROOT / ".env")
 
 # ── Ecowitt credentials ───────────────────────────────────────────────────────
@@ -35,6 +35,7 @@ def calc_lvpd(T, rh, offset=2.0):
     return round(svp(T - offset) - svp(T) * (rh / 100), 3)
 
 LVPD_ZONES = [
+    (-9.9, 0.0,  "Condensing 🌫️",   "#7c3aed",  "Condensation on leaves — botrytis high risk"),
     (0.0,  0.4,  "Too Humid 💧",    "#ef4444",  "Vent — botrytis risk"),
     (0.4,  0.8,  "Low ↓",           "#f97316",  "Monitor"),
     (0.8,  1.2,  "✅ Optimal",       "#22c55e",  "No action"),
@@ -187,10 +188,11 @@ if page == "🌡️ Live Greenhouse":
         title={"text": "LVPD (kPa)", "font": {"size": 18}},
         number={"suffix": " kPa", "font": {"size": 28}},
         gauge={
-            "axis": {"range": [0, 2.5], "tickwidth": 1},
+            "axis": {"range": [-0.5, 2.5], "tickwidth": 1},
             "bar": {"color": zone_color},
             "steps": [
-                {"range": [0, 0.4],  "color": "#fecaca"},
+                {"range": [-0.5, 0.0],"color": "#ede9fe"},
+                {"range": [0.0, 0.4], "color": "#fecaca"},
                 {"range": [0.4, 0.8],"color": "#fed7aa"},
                 {"range": [0.8, 1.2],"color": "#bbf7d0"},
                 {"range": [1.2, 1.5],"color": "#fed7aa"},
