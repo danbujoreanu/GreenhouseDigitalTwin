@@ -1,0 +1,15 @@
+[theme]
+# Light high-contrast theme — dark sidebar / light content
+# Design system: primaryColor for buttons/links, rest is CSS-controlled
+base                    = "light"
+primaryColor            = "#15803d"          # green-700 — 5.3:1 on white ✓ WCAG AA
+backgroundColor         = "#f9fafb"          # gray-50 — near-white, no glare
+secondaryBackgroundColor = "#f3f4f6"         # gray-100 — input fields, expanders
+textColor               = "#111827"          # gray-900 — max contrast
+
+[server]
+headless        = true
+runOnSave       = false
+
+[browser]
+gatherUsageStats = false

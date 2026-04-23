@@ -1,0 +1,470 @@
+{
+  "description": "Maynooth Homestead Digital Twin — Live greenhouse sensor monitoring",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+      "id": 10,
+      "title": "Current Status",
+      "type": "row"
+    },
+
+    {
+      "datasource": {"type": "influxdb", "uid": "greenhouse-influxdb"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "decimals": 3,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "#7c3aed", "value": null},
+              {"color": "#ef4444", "value": 0},
+              {"color": "#f97316", "value": 0.4},
+              {"color": "#22c55e", "value": 0.8},
+              {"color": "#f97316", "value": 1.2},
+              {"color": "#ef4444", "value": 1.5}
+            ]
+          },
+          "unit": "pressurekpa",
+          "min": -0.5,
+          "max": 2.5
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 1},
+      "id": 1,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "auto"
+      },
+      "title": "LVPD",
+      "type": "stat",
+      "targets": [
+        {
+          "datasource": {"type": "influxdb", "uid": "greenhouse-influxdb"},
+          "query": "from(bucket: \"greenhouse\")\n  |> range(start: -15m)\n  |> filter(fn: (r) => r._measurement == \"greenhouse_canopy\" and r._field == \"lvpd_kpa\")\n  |> last()",
+          "refId": "A"
+        }
+      ]
+    },
+
+    {
+      "datasource": {"type": "influxdb", "uid": "greenhouse-influxdb"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "decimals": 1,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "#ef4444", "value": null},
+              {"color": "#f97316", "value": 25},
+              {"color": "#22c55e", "value": 35},
+              {"color": "#f97316", "value": 70},
+              {"color": "#ef4444", "value": 85}
+            ]
+          },
+          "unit": "percent",
+          "min": 0,
+          "max": 100
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 1},
+      "id": 2,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "auto"
+      },
+      "title": "Soil GH4 North (%)",
+      "type": "stat",
+      "targets": [
+        {
+          "datasource": {"type": "influxdb", "uid": "greenhouse-influxdb"},
+          "query": "from(bucket: \"greenhouse\")\n  |> range(start: -15m)\n  |> filter(fn: (r) => r._measurement == \"soil_moisture\" and r._field == \"moisture_pct\" and r.zone == \"GH4N\")\n  |> last()",
+          "refId": "A"
+        }
+      ]
+    },
+
+    {
+      "datasource": {"type": "influxdb", "uid": "greenhouse-influxdb"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "decimals": 1,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "#ef4444", "value": null},
+              {"color": "#f97316", "value": 25},
+              {"color": "#22c55e", "value": 35},
+              {"color": "#f97316", "value": 70},
+              {"color": "#ef4444", "value": 85}
+            ]
+          },
+          "unit": "percent",
+          "min": 0,
+          "max": 100
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 1},
+      "id": 3,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "auto"
+      },
+      "title": "Soil GH4 South (%)",
+      "type": "stat",
+      "targets": [
+        {
+          "datasource": {"type": "influxdb", "uid": "greenhouse-influxdb"},
+          "query": "from(bucket: \"greenhouse\")\n  |> range(start: -15m)\n  |> filter(fn: (r) => r._measurement == \"soil_moisture\" and r._field == \"moisture_pct\" and r.zone == \"GH4S\")\n  |> last()",
+          "refId": "A"
+        }
+      ]
+    },
+
+    {
+      "datasource": {"type": "influxdb", "uid": "greenhouse-influxdb"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "decimals": 1,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "#3b82f6", "value": null},
+              {"color": "#22c55e", "value": 15},
+              {"color": "#f97316", "value": 30},
+              {"color": "#ef4444", "value": 38}
+            ]
+          },
+          "unit": "celsius"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 1},
+      "id": 4,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "auto"
+      },
+      "title": "Canopy Temp",
+      "type": "stat",
+      "targets": [
+        {
+          "datasource": {"type": "influxdb", "uid": "greenhouse-influxdb"},
+          "query": "from(bucket: \"greenhouse\")\n  |> range(start: -15m)\n  |> filter(fn: (r) => r._measurement == \"greenhouse_canopy\" and r._field == \"temperature_c\")\n  |> last()",
+          "refId": "A"
+        }
+      ]
+    },
+
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 5},
+      "id": 11,
+      "title": "LVPD Trend — 24h",
+      "type": "row"
+    },
+
+    {
+      "datasource": {"type": "influxdb", "uid": "greenhouse-influxdb"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "LVPD (kPa)",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "gradientMode": "none",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 4,
+            "scaleDistribution": {"type": "linear"},
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {"group": "A", "mode": "none"},
+            "thresholdsStyle": {"mode": "area"}
+          },
+          "decimals": 3,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "rgba(124, 58, 237, 0.15)", "value": null},
+              {"color": "rgba(239, 68, 68, 0.15)", "value": 0},
+              {"color": "rgba(249, 115, 22, 0.15)", "value": 0.4},
+              {"color": "rgba(34, 197, 94, 0.15)", "value": 0.8},
+              {"color": "rgba(249, 115, 22, 0.15)", "value": 1.2},
+              {"color": "rgba(239, 68, 68, 0.15)", "value": 1.5}
+            ]
+          },
+          "unit": "pressurekpa",
+          "min": -0.5,
+          "max": 2.5
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "_value"},
+            "properties": [
+              {"id": "color", "value": {"fixedColor": "#2d6a4f", "mode": "fixed"}},
+              {"id": "displayName", "value": "LVPD (kPa)"}
+            ]
+          }
+        ]
+      },
+      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 6},
+      "id": 5,
+      "options": {
+        "legend": {"calcs": ["lastNotNull", "min", "max", "mean"], "displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "single", "sort": "none"}
+      },
+      "title": "Leaf Vapour Pressure Deficit (LVPD)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": {"type": "influxdb", "uid": "greenhouse-influxdb"},
+          "query": "from(bucket: \"greenhouse\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"greenhouse_canopy\" and r._field == \"lvpd_kpa\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> yield(name: \"mean\")",
+          "refId": "A"
+        }
+      ]
+    },
+
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 15},
+      "id": 12,
+      "title": "Soil Moisture",
+      "type": "row"
+    },
+
+    {
+      "datasource": {"type": "influxdb", "uid": "greenhouse-influxdb"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisBorderShow": false,
+            "axisLabel": "Moisture (%)",
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 4,
+            "showPoints": "auto",
+            "spanNulls": false,
+            "thresholdsStyle": {"mode": "line"}
+          },
+          "decimals": 1,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "transparent", "value": null},
+              {"color": "#ef4444", "value": 25},
+              {"color": "transparent", "value": 35}
+            ]
+          },
+          "unit": "percent",
+          "min": 0,
+          "max": 80
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byFrameRefID", "options": "A"},
+            "properties": [
+              {"id": "displayName", "value": "GH4 North"},
+              {"id": "color", "value": {"fixedColor": "#2d6a4f", "mode": "fixed"}}
+            ]
+          },
+          {
+            "matcher": {"id": "byFrameRefID", "options": "B"},
+            "properties": [
+              {"id": "displayName", "value": "GH4 South"},
+              {"id": "color", "value": {"fixedColor": "#52b788", "mode": "fixed"}}
+            ]
+          }
+        ]
+      },
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 16},
+      "id": 6,
+      "options": {
+        "legend": {"calcs": ["lastNotNull", "min", "max"], "displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "none"}
+      },
+      "title": "Soil Moisture — GH4 North + South",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": {"type": "influxdb", "uid": "greenhouse-influxdb"},
+          "query": "from(bucket: \"greenhouse\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"soil_moisture\" and r._field == \"moisture_pct\" and r.zone == \"GH4N\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> yield(name: \"mean\")",
+          "refId": "A"
+        },
+        {
+          "datasource": {"type": "influxdb", "uid": "greenhouse-influxdb"},
+          "query": "from(bucket: \"greenhouse\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"soil_moisture\" and r._field == \"moisture_pct\" and r.zone == \"GH4S\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> yield(name: \"mean\")",
+          "refId": "B"
+        }
+      ]
+    },
+
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 24},
+      "id": 13,
+      "title": "Climate — Temperature & Humidity",
+      "type": "row"
+    },
+
+    {
+      "datasource": {"type": "influxdb", "uid": "greenhouse-influxdb"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisLabel": "Temperature (°C)",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 4,
+            "showPoints": "auto",
+            "spanNulls": false,
+            "thresholdsStyle": {"mode": "off"}
+          },
+          "decimals": 1,
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]},
+          "unit": "celsius"
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byFrameRefID", "options": "A"},
+            "properties": [
+              {"id": "displayName", "value": "Canopy (GH)"},
+              {"id": "color", "value": {"fixedColor": "#f97316", "mode": "fixed"}}
+            ]
+          }
+        ]
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 25},
+      "id": 7,
+      "options": {
+        "legend": {"calcs": ["lastNotNull", "min", "max"], "displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "none"}
+      },
+      "title": "Temperature — Canopy",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": {"type": "influxdb", "uid": "greenhouse-influxdb"},
+          "query": "from(bucket: \"greenhouse\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"greenhouse_canopy\" and r._field == \"temperature_c\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> yield(name: \"mean\")",
+          "refId": "A"
+        }
+      ]
+    },
+
+    {
+      "datasource": {"type": "influxdb", "uid": "greenhouse-influxdb"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisLabel": "Relative Humidity (%)",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 4,
+            "showPoints": "auto",
+            "spanNulls": false,
+            "thresholdsStyle": {"mode": "line"}
+          },
+          "decimals": 1,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "transparent", "value": null},
+              {"color": "#ef4444", "value": 85}
+            ]
+          },
+          "unit": "percent",
+          "min": 0,
+          "max": 100
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byFrameRefID", "options": "A"},
+            "properties": [
+              {"id": "displayName", "value": "Canopy RH"},
+              {"id": "color", "value": {"fixedColor": "#3b82f6", "mode": "fixed"}}
+            ]
+          }
+        ]
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 25},
+      "id": 8,
+      "options": {
+        "legend": {"calcs": ["lastNotNull", "min", "max"], "displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "none"}
+      },
+      "title": "Humidity — Canopy RH",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": {"type": "influxdb", "uid": "greenhouse-influxdb"},
+          "query": "from(bucket: \"greenhouse\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"greenhouse_canopy\" and r._field == \"humidity_pct\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> yield(name: \"mean\")",
+          "refId": "A"
+        }
+      ]
+    }
+
+  ],
+  "refresh": "5m",
+  "schemaVersion": 38,
+  "tags": ["greenhouse", "digital-twin", "maynooth"],
+  "templating": {"list": []},
+  "time": {"from": "now-24h", "to": "now"},
+  "timepicker": {},
+  "timezone": "Europe/Dublin",
+  "title": "Greenhouse Digital Twin",
+  "uid": "greenhouse-v1",
+  "version": 1
+}

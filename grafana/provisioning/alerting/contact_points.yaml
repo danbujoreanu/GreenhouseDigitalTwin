@@ -1,0 +1,21 @@
+apiVersion: 1
+
+# ── Contact Points — Greenhouse Digital Twin ─────────────────────────────────
+# Alerts route via n8n (shared Sparc Energy stack) → Pushover.
+# n8n Workflow 2 (GH Alert Relay) is already active at:
+#   http://host.docker.internal:5678/webhook/gh-alert
+#
+# No credentials needed here — n8n owns the Pushover token.
+# Requires: Sparc Energy Docker stack running (n8n on port 5678).
+
+contactPoints:
+
+  - orgId: 1
+    name: greenhouse-n8n
+    receivers:
+      - uid: n8n-webhook-receiver
+        type: webhook
+        settings:
+          url: "http://host.docker.internal:5678/webhook/gh-alert"
+          httpMethod: POST
+          maxAlerts: 10

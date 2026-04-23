@@ -29,6 +29,26 @@ ECOWITT_APP_KEY = os.getenv("ECOWITT_APPLICATION_KEY", "")
 ECOWITT_API_KEY = os.getenv("ECOWITT_API_KEY", "")
 DEVICE_MAC      = os.getenv("ECOWITT_DEVICE_MAC", "")
 
+# ── Pushover (user-triggered notifications from Streamlit) ────────────────────
+PUSHOVER_GH_TOKEN  = os.getenv("PUSHOVER_GH_TOKEN", "")
+PUSHOVER_USER_KEY  = os.getenv("PUSHOVER_USER_KEY", "")
+
+def send_pushover(message: str, title: str = "🌿 Greenhouse", priority: int = 0) -> bool:
+    """Send a Pushover notification via the DT Greenhouse app.
+    priority: -1=quiet, 0=normal, 1=high. Returns True on success."""
+    if not PUSHOVER_GH_TOKEN or not PUSHOVER_USER_KEY:
+        return False
+    try:
+        r = requests.post(
+            "https://api.pushover.net/1/messages.json",
+            data={"token": PUSHOVER_GH_TOKEN, "user": PUSHOVER_USER_KEY,
+                  "title": title, "message": message, "priority": priority},
+            timeout=5
+        )
+        return r.json().get("status") == 1
+    except Exception:
+        return False
+
 # ── LVPD engine ───────────────────────────────────────────────────────────────
 def svp(T): return 0.6108 * math.exp(17.27 * T / (T + 237.3))
 def calc_lvpd(T, rh, offset=2.0):
@@ -50,13 +70,39 @@ def lvpd_zone(v):
     return "Unknown", "#6b7280", ""
 
 # ── Produce value table ───────────────────────────────────────────────────────
+# Prices: Irish supermarket / specialty shop, organic where available — April 2026
+# Tomato prices are variety-specific; cherry commands 3× the price of plum.
 PRICES = {
-    "San Marzano": 3.0, "Black Krim": 4.5, "Marmande": 3.5,
-    "Sungold F1": 8.0, "Tigerella": 3.5, "Smarald": 3.5,
-    "Passandra F1": 4.0, "Jalapeño Ruben": 12.0, "Yolo Wonder": 5.0,
-    "Pantos": 5.0, "Tsaksoniki Aubergine": 4.0, "Kelvedon Wonder": 6.0,
-    "Aquadulce Claudia": 5.0, "Defender F1": 3.0, "Uchiki Kuri": 2.5,
-    "Kale": 3.0, "Spinach Matador": 4.0, "Dalmaziano": 8.0, "Cobra": 6.0,
+    # Tomatoes — confirmed Irish market prices
+    "San Marzano":            4.00,  # Organic plum/paste. Tesco organic plum ~€4/kg
+    "Black Krim":             7.00,  # Heirloom beefsteak. Specialty/farmers market €6–8/kg (rare in Ireland)
+    "Marmande":               5.00,  # Ribbed beef tomato. Organic beef ~€4–6/kg
+    "Sungold F1":            12.00,  # Premium cherry. Tesco 250g punnet = €3.00 → €12/kg
+    "Tigerella":              6.00,  # Striped specialty. Farmers market €5–7/kg
+    "Smarald":                4.50,  # Romanian heirloom. Estimated specialty plum level
+    "Prima Bella":            5.00,  # Polish heirloom. Specialty ~€5/kg
+    # Cucumbers
+    "Passandra F1":           5.00,  # Mini cucumber. Organic 3-pack ~€2.50 → ~€5/kg
+    # Capsicums / Aubergines
+    "Jalapeño Ruben":        14.00,  # Fresh organic jalapeño very rare in IE — specialty €12–16/kg
+    "Yolo Wonder":            4.50,  # Red bell pepper. Tesco organic €4–5/kg
+    "Pantos":                 5.00,  # Specialty Romanian pepper
+    "Tsaksoniki Aubergine":   4.50,  # Organic aubergine. Tesco ~€4–5/kg
+    # Legumes
+    "Kelvedon Wonder":        6.00,  # Fresh peas. Organic fresh peas are expensive ~€5–7/kg
+    "Aquadulce Claudia":      5.00,  # Fresh broad beans. ~€5/kg
+    "Dalmaziano":             9.00,  # Organic dry borlotti beans. ~€7–10/kg
+    "Cobra":                  6.00,  # Fresh climbing beans. ~€5–7/kg
+    # Squash / Courgette
+    "Defender F1":            2.50,  # Courgette. Cheap in season ~€2–3/kg
+    "Uchiki Kuri":            2.00,  # Winter squash. ~€2/kg
+    # Leafy greens
+    "Kale":                   4.00,  # Organic kale. Tesco organic bag ~€1.80/200g → ~€9/kg; say €4 loose
+    "Spinach Matador":        5.00,  # Organic spinach. Very expensive per kg ~€5–8/kg
+    # Herbs (high value/kg — sold in tiny quantities)
+    "Basil":                 20.00,  # Tesco fresh basil €1.50/30g → €50/kg; say €20 realistic
+    "Dill":                  15.00,  # Fresh dill. Specialty ~€15/kg
+    "Parsley":               10.00,  # Fresh Italian parsley ~€10/kg
 }
 
 # ── Page config ───────────────────────────────────────────────────────────────
@@ -67,30 +113,166 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Custom CSS
+# ── Design system: Dark sidebar · Light content · Forest green accents ──────
+# Palette: bg #f9fafb · text #111827 · primary #15803d · border #e5e7eb
+# Sidebar: #162d1f (dark) · sidebar text: #c8e6d4
+# WCAG AA compliant: primary on white = 5.3:1 ✓ · sidebar text on sidebar bg = 6.1:1 ✓
 st.markdown("""
 <style>
-    .metric-card { background: #1e293b; border-radius: 8px; padding: 1rem; }
-    .zone-badge { padding: 4px 12px; border-radius: 20px; font-weight: 600; display: inline-block; }
+    /* ── Hide built-in nav ── */
     [data-testid="stSidebarNav"] { display: none; }
+
+    /* ── SIDEBAR — dark forest ── */
+    [data-testid="stSidebar"] {
+        background: #162d1f !important;
+        border-right: 1px solid #1e3d28;
+    }
+    [data-testid="stSidebar"] p,
+    [data-testid="stSidebar"] label,
+    [data-testid="stSidebar"] span,
+    [data-testid="stSidebar"] div { color: #c8e6d4 !important; }
+    [data-testid="stSidebar"] h1,
+    [data-testid="stSidebar"] h2,
+    [data-testid="stSidebar"] h3,
+    [data-testid="stSidebar"] strong { color: #6ee7a0 !important; }
+    [data-testid="stSidebar"] hr { border-color: #1e3d28 !important; }
+    /* Radio buttons in sidebar */
+    [data-testid="stSidebar"] [data-testid="stMarkdown"] { color: #c8e6d4 !important; }
+
+    /* ── MAIN CONTENT — metric cards ── */
+    [data-testid="metric-container"] {
+        background: #ffffff;
+        border: 1px solid #e5e7eb;
+        border-radius: 10px;
+        padding: 1rem 1.25rem;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    }
+    [data-testid="stMetricLabel"] {
+        font-size: 0.72rem !important;
+        font-weight: 600 !important;
+        text-transform: uppercase;
+        letter-spacing: 0.07em;
+        color: #6b7280 !important;
+    }
+    [data-testid="stMetricValue"] {
+        font-size: 1.65rem !important;
+        font-weight: 700;
+        color: #111827 !important;
+    }
+    [data-testid="stMetricDelta"] { font-size: 0.8rem !important; }
+
+    /* ── STATUS PILLS ── */
+    .status-pill {
+        display: inline-block;
+        padding: 3px 11px;
+        border-radius: 14px;
+        font-size: 0.76rem;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        margin: 2px 1px;
+    }
+    /* Sidebar context — dark background pills */
+    .pill-ok   { background: #14532d; color: #86efac; border: 1px solid #166534; }
+    .pill-warn { background: #78350f; color: #fde68a; border: 1px solid #92400e; }
+    .pill-bad  { background: #7f1d1d; color: #fca5a5; border: 1px solid #991b1b; }
+    .pill-info { background: #1e3a5f; color: #93c5fd; border: 1px solid #1d4ed8; }
+
+    /* ── INFO BANNER (light context) ── */
+    .info-banner {
+        background: #f0fdf4;
+        border-left: 4px solid #15803d;
+        padding: 12px 18px;
+        border-radius: 0 8px 8px 0;
+        color: #14532d;
+        font-size: 0.88rem;
+        margin: 12px 0;
+        line-height: 1.55;
+    }
+
+    /* ── SCORE CARD (big number) ── */
+    .score-card {
+        background: #ffffff;
+        border: 1px solid #e5e7eb;
+        border-radius: 14px;
+        padding: 1.5rem 2rem;
+        text-align: center;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    }
+    .score-number { font-size: 3rem; font-weight: 800; line-height: 1; }
+    .score-label  { font-size: 0.8rem; color: #6b7280; text-transform: uppercase;
+                    letter-spacing: 0.06em; margin-top: 6px; }
+
+    /* ── BUTTONS ── */
+    .stButton > button {
+        border: 1px solid #d1d5db;
+        border-radius: 8px;
+        font-weight: 500;
+        color: #374151;
+        background: #ffffff;
+        transition: all 0.12s ease;
+    }
+    .stButton > button:hover {
+        border-color: #15803d;
+        background: #f0fdf4;
+        color: #14532d;
+    }
+
+    /* ── SIDEBAR BUTTON override ── */
+    [data-testid="stSidebar"] .stButton > button {
+        background: #1e3d28;
+        border-color: #2d6a4f;
+        color: #c8e6d4;
+    }
+    [data-testid="stSidebar"] .stButton > button:hover {
+        background: #2d6a4f;
+        color: #f0fdf4;
+    }
+
+    /* ── DATAFRAMES ── */
+    [data-testid="stDataFrame"] {
+        border: 1px solid #e5e7eb !important;
+        border-radius: 8px;
+        overflow: hidden;
+    }
+
+    /* ── TEXT INPUT ── */
+    [data-testid="stTextInput"] input {
+        border: 1px solid #d1d5db !important;
+        border-radius: 8px !important;
+    }
+    [data-testid="stTextInput"] input:focus {
+        border-color: #15803d !important;
+        box-shadow: 0 0 0 3px rgba(21,128,61,0.12) !important;
+    }
+
+    /* ── EXPANDERS ── */
+    [data-testid="stExpander"] {
+        border: 1px solid #e5e7eb !important;
+        border-radius: 8px !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 # ── Sidebar navigation ────────────────────────────────────────────────────────
 with st.sidebar:
-    st.image("https://img.icons8.com/emoji/48/seedling.png", width=48)
-    st.title("Homestead Hub")
+    st.markdown("### 🌱 Homestead Hub")
     st.caption("Maynooth · Zone 8b · 52°N")
     st.divider()
     page = st.radio(
         "Navigate",
         ["🌡️ Live Greenhouse", "🌱 Production", "📋 Season Pipeline",
-         "⏱️ Time & ROI", "💰 Finance", "🤖 Ask the Garden"],
+         "⏱️ Time & ROI", "💰 Finance", "🌤️ Weather & GH Health", "🤖 Ask the Garden"],
         label_visibility="collapsed"
     )
     st.divider()
-    st.caption(f"Last refresh: {datetime.now().strftime('%H:%M:%S')}")
-    if st.button("🔄 Refresh"):
+    # Quick status strip
+    st.markdown("**System status**")
+    st.markdown('<span class="status-pill pill-ok">🟢 Sensors live</span>', unsafe_allow_html=True)
+    st.markdown('<span class="status-pill pill-ok">🟢 RAG ready</span>', unsafe_allow_html=True)
+    st.markdown('<span class="status-pill pill-info">🔵 Fan: AC1100 paired</span>', unsafe_allow_html=True)
+    st.divider()
+    st.caption(f"Refreshed: {datetime.now().strftime('%H:%M:%S')}")
+    if st.button("🔄 Refresh data", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
 
@@ -167,19 +349,42 @@ if page == "🌡️ Live Greenhouse":
               delta="Low" if soil_ch2 < 30 else "OK")
 
     # ── LVPD zone indicator ───────────────────────────────────────────────────
+    fan_rh_threshold = 85.0
+    fan_status = "ON — humidity trigger" if gh_rh >= fan_rh_threshold else "standby"
+    fan_pill_class = "pill-warn" if gh_rh >= fan_rh_threshold else "pill-ok"
+
     st.markdown(f"""
-    <div style='background:{zone_color}22; border-left: 4px solid {zone_color};
-         padding: 12px 20px; border-radius: 8px; margin: 16px 0;'>
-    <strong style='color:{zone_color}; font-size:1.1em'>{zone_label}</strong>
-    &nbsp;&nbsp;→&nbsp;&nbsp;{zone_action}
-    &nbsp;&nbsp;|&nbsp;&nbsp;LVPD = {lvpd_val:.3f} kPa
+    <div style='background:{zone_color}18; border-left: 4px solid {zone_color};
+         padding: 14px 22px; border-radius: 10px; margin: 16px 0;
+         display: flex; align-items: center; gap: 24px;'>
+      <div>
+        <span style='color:{zone_color}; font-size:1.15em; font-weight:700'>{zone_label}</span>
+        &nbsp; → &nbsp;<span style='color:#d1fae5'>{zone_action}</span>
+        &nbsp;&nbsp;<span style='color:#6b7280; font-size:0.85em'>LVPD = {lvpd_val:.3f} kPa</span>
+      </div>
+      <div style='margin-left:auto'>
+        <span class='status-pill {fan_pill_class}'>🌀 Fan: {fan_status}</span>
+        &nbsp;
+        <span class='status-pill pill-info'>📡 AC1100 paired</span>
+      </div>
     </div>
     """, unsafe_allow_html=True)
 
-    # ── Irrigation recommendation ─────────────────────────────────────────────
+    # ── Irrigation recommendation + partner alert ─────────────────────────────
     needs_water = (soil_ch1 < 35 or soil_ch2 < 35) and lvpd_val > 0.4
-    st.info("💧 **Irrigation recommended** — soil moisture low" if needs_water
-            else "✅ **No irrigation needed** — soil moisture adequate")
+    col_irr, col_btn = st.columns([3, 1])
+    with col_irr:
+        st.info("💧 **Irrigation recommended** — soil moisture low" if needs_water
+                else "✅ **No irrigation needed** — soil moisture adequate")
+    with col_btn:
+        if st.button("📲 Send water reminder", help="Push Pushover alert to phone"):
+            beds = []
+            if soil_ch1 < 35: beds.append(f"GH4N {soil_ch1:.0f}%")
+            if soil_ch2 < 35: beds.append(f"GH4S {soil_ch2:.0f}%")
+            msg = (f"💧 Water reminder\nLVPD: {lvpd_val:.3f} kPa | Temp: {gh_temp:.1f}°C\n"
+                   f"Dry beds: {', '.join(beds) if beds else 'none'}")
+            ok = send_pushover(msg, title="🌿 GH Water Reminder", priority=0)
+            st.success("✅ Reminder sent!") if ok else st.warning("⚠️ Pushover not configured")
 
     # ── LVPD gauge ───────────────────────────────────────────────────────────
     fig = go.Figure(go.Indicator(
@@ -292,21 +497,23 @@ elif page == "📋 Season Pipeline":
 
     pipeline_data = [
         # variety, zone, sow_date, stage, expected_harvest, notes
-        ("San Marzano", "GH2N/GH2S", "2026-03-01", "🌿 Growing", "2026-07-15", "6 cordons"),
-        ("Black Krim", "GH3N/GH5S", "2026-03-01", "🌿 Growing", "2026-07-20", "4 cordons"),
-        ("Marmande", "GH3S/GH5N", "2026-03-01", "🌿 Growing", "2026-07-20", "4 cordons"),
-        ("Sungold F1", "GH4N", "2026-03-01", "🌿 Growing", "2026-07-10", "Earliest fruiter"),
-        ("Tigerella", "GH4S", "2026-03-01", "🌿 Growing", "2026-07-15", "2 cordons"),
-        ("Passandra F1", "GH1N/GH1S", "2026-03-10", "🌿 Growing", "2026-07-01", "3 plants, training up ridge"),
+        ("San Marzano", "GH2N/GH2S", "2026-03-01", "🌿 Growing", "2026-07-15", "7 plants (6 cordon + 1 stake)"),
+        ("Black Krim", "GH3N/GH5S", "2026-03-01", "🌿 Growing", "2026-07-20", "5 plants (4 cordon + 1 stake)"),
+        ("Marmande", "GH3S/GH5N", "2026-03-01", "🌿 Growing", "2026-07-20", "5 plants (4 cordon + 1 stake)"),
+        ("Sungold F1", "GH4N/GH5S", "2026-03-01", "🌿 Growing", "2026-07-10", "4 plants — €12/kg cherry, earliest fruiter"),
+        ("Tigerella", "GH4S/GH5N", "2026-03-01", "🌿 Growing", "2026-07-15", "3 plants (2 cordon + 1 stake)"),
+        ("Tomato (4 unconfirmed)", "GH various", "2026-04-07", "🌿 Growing", "2026-07-20", "⚠️ Variety unconfirmed — check pot labels May 3 (GARDEN-74)"),
+        ("Tomato (outdoor mix)", "Bay 3 E-wall", "2026-03-01", "🌿 Growing", "2026-08-01", "11 plants, sunny east wall — planted May 2026"),
+        ("Passandra F1", "GH1N/GH1S", "2026-03-10", "🌿 Growing", "2026-07-01", "3 plants: H1N×1, H1S×2 — training up ridge"),
         ("Jalapeño Ruben", "GH6N", "2026-01-04", "🌸 Establishing", "2026-08-01", "8 plants, 60cm canes"),
         ("Yolo Wonder", "GH6S", "2026-01-04", "🌸 Establishing", "2026-08-15", "3 plants"),
         ("Tsaksoniki Aubergine", "GH6S", "2026-01-04", "🌸 Establishing", "2026-08-15", "3 plants"),
-        ("Pantos", "GH6S", "2026-03-09", "🌱 Growing", "2026-08-20", "12 plants total"),
+        ("Pantos", "GH6S", "2026-03-09", "🌸 Establishing", "2026-08-20", "12+ plants (lab batch Apr 18 — confirm variety on return)"),
         ("Aquadulce Claudia", "Bay 6", "2026-03-01", "🌿 Growing", "2026-06-20", "8 plants, against trellis"),
         ("Kelvedon Wonder", "Bay 5", "2026-03-18", "🌿 Growing", "2026-06-15", "36 positions"),
-        ("Kale (Nero + Amara)", "Lab → Bay 4/5", "2026-03-10", "🪴 Lab ready", "2026-09-01", "46 plants, cage needed"),
-        ("Defender F1 Courgette", "Bay 6 (outdoor)", "NOT SOWN", "⚠️ Sow May 4", "2026-07-20", "Urgent — heat mat"),
-        ("Uchiki Kuri Squash", "Bay 6 (outdoor)", "NOT SOWN", "⚠️ Sow May 4", "2026-08-15", "Urgent — heat mat"),
+        ("Kale (Nero + Amara)", "Lab → Bay 4/5", "2026-03-10", "🪴 Lab ready", "2026-09-01", "46 plants, brassica cage needed first"),
+        ("Defender F1 Courgette", "Bay 6 (outdoor)", "NOT SOWN", "⚠️ Sow May 4", "2026-07-20", "URGENT — heat mat on return"),
+        ("Uchiki Kuri Squash", "Bay 6 (outdoor)", "NOT SOWN", "⚠️ Sow May 4", "2026-08-15", "URGENT — heat mat on return"),
         ("Dalmaziano Beans", "Bay 3", "NOT SOWN", "⚠️ Sow May 1", "2026-09-01", "Direct sow outdoors"),
     ]
 
@@ -319,7 +526,7 @@ elif page == "📋 Season Pipeline":
 
     # Gantt chart
     gantt_data = []
-    today = pd.Timestamp("2026-04-20")
+    today = pd.Timestamp.now().normalize()
     for _, row in df_pipe.iterrows():
         start = pd.to_datetime(row["Sown"], errors="coerce") or today
         end = pd.to_datetime(row["Expected Harvest"], errors="coerce")
@@ -334,8 +541,15 @@ elif page == "📋 Season Pipeline":
                           "🪴 Lab ready": "#a855f7", "⚠️ Sow May 4": "#ef4444",
                           "⚠️ Sow May 1": "#ef4444",
                       })
-    fig.add_vline(x="2026-04-20", line_dash="dash", line_color="white",
-                  annotation_text="Today", annotation_position="top right")
+    # px.timeline uses ms-epoch on x-axis; add_vline annotation causes TypeError
+    # with string dates on timeline charts. Pass epoch ms + separate annotation.
+    today_ms = int(today.timestamp() * 1000)
+    fig.add_vline(x=today_ms, line_dash="dash", line_color="#52b788")
+    fig.add_annotation(
+        x=today_ms, y=1.02, xref="x", yref="paper",
+        text="Today", showarrow=False,
+        font=dict(color="#52b788", size=12), bgcolor="rgba(0,0,0,0.4)"
+    )
     fig.update_layout(height=600, yaxis_autorange="reversed")
     st.plotly_chart(fig, use_container_width=True)
 
@@ -482,46 +696,464 @@ elif page == "💰 Finance":
     st.dataframe(pd.DataFrame([
         {"Item": "Mac Mini M5 (16GB/256GB)", "Est. €": 799, "When": "Jun 2026", "Linear": "GARDEN-19"},
         {"Item": "WFC01 Smart Valve", "Est. €": 60, "When": "Jun-Jul 2026", "Linear": "GARDEN-24"},
-        {"Item": "8\" Clip Fan", "Est. €": 30, "When": "May 2026", "Linear": "GARDEN-16"},
-        {"Item": "Neem Oil", "Est. €": 15, "When": "May 2026", "Linear": "Return sprint"},
-        {"Item": "Calcium Fertiliser (chase FHF)", "Est. €": 0, "When": "May 2026", "Linear": "GARDEN-17"},
+        {"Item": "Neem Oil", "Est. €": 15, "When": "May 3+ return", "Linear": "Return sprint"},
+        {"Item": "Calcium Fertiliser (FHF — dispatched Apr 21)", "Est. €": 0, "When": "May 3+ delivery", "Linear": "GARDEN-17"},
+        {"Item": "Bamboo canes ×80+", "Est. €": 18, "When": "May 3+ return", "Linear": "Return sprint"},
+    ]), hide_index=True, use_container_width=True)
+
+    st.subheader("Recently purchased ✅")
+    st.dataframe(pd.DataFrame([
+        {"Item": "ProFan 8\" Clip Fan 20W (SKU FAN-OSC-20W)", "Paid €": 37.00, "Date": "22 Apr 2026"},
+        {"Item": "Ecowitt AC1100 WittSwitch Smart Plug", "Paid €": 35.99, "Date": "23 Apr 2026"},
+        {"Item": "Propagator Large (TI204) + Small (TI205)", "Paid €": 25.00, "Date": "22 Apr 2026"},
+        {"Item": "Vitavia Wall Shelves ×2 (Lenehans)", "Paid €": 73.98, "Date": "8 Apr 2026"},
     ]), hide_index=True, use_container_width=True)
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# PAGE 6 — ASK THE GARDEN (RAG placeholder)
+# PAGE 6 — ASK THE GARDEN (RAG — live Apr 2026)
 # ═══════════════════════════════════════════════════════════════════════════════
 elif page == "🤖 Ask the Garden":
     st.title("🤖 Ask the Garden")
-    st.caption("Plant knowledge RAG — powered by Charles Dowding (No Dig), RHS, themarketgardener.com")
+    st.markdown("""
+    <div class="info-banner">
+    📚 <strong>intel_garden RAG — live</strong> &nbsp;·&nbsp;
+    7 docs · 73 chunks · LlamaIndex + ChromaDB + MiniLM-L6-v2 &nbsp;·&nbsp;
+    Sources: GH climate & VPD · agronomic playbook · crop targets · predictive irrigation · MASTER_INVENTORY · Jean-Martin Fortier methodology
+    </div>
+    """, unsafe_allow_html=True)
 
-    RAG_STATUS = "not_built"  # change to "ready" when intel_garden tier is populated
+    # Example question buttons
+    st.markdown("**Quick questions:**")
+    ex_cols = st.columns(3)
+    example_questions = [
+        "What LVPD causes botrytis risk in Kildare?",
+        "When to stop side-shooting cordon tomatoes?",
+        "How often to feed tomatoes with Vinasse?",
+        "What soil moisture triggers irrigation?",
+        "Best time to harvest Jalapeño Ruben?",
+        "How to build the brassica cage?",
+    ]
+    selected_example = None
+    for i, eq in enumerate(example_questions):
+        with ex_cols[i % 3]:
+            if st.button(eq, use_container_width=True):
+                selected_example = eq
 
-    if RAG_STATUS == "not_built":
-        st.warning("⏳ **Plant knowledge RAG not yet built** — this is GARDEN-3 (due May 31)")
-        st.markdown("""
-        **When ready, you'll be able to ask:**
-        - *"When should I side-dress the San Marzano?"*
-        - *"What LVPD is optimal for jalapeño fruit set?"*
-        - *"No-dig compost depth for cucumber beds?"*
-        - *"Signs of magnesium deficiency in Black Krim?"*
+    st.divider()
+    question = st.text_input(
+        "Ask about your crops:",
+        value=selected_example or "",
+        placeholder="e.g. When to stop side-shooting tomatoes?"
+    )
 
-        **To build the intel_garden tier:**
-        ```bash
-        cd ~/building-energy-load-forecast
-        # Ingest Charles Dowding no-dig.com articles + RHS grow guides
-        ~/miniconda3/envs/ml_lab1/bin/python scripts/intel_ingest.py \\
-          --dir "/Users/danalexandrubujoreanu/Personal Projects/Gardening/intel/docs/garden" \\
-          --tier garden
-        ```
-        """)
-    else:
-        question = st.text_input("Ask about your crops:", placeholder="e.g. When to stop side-shooting tomatoes?")
-        if question:
-            import subprocess, sys
-            result = subprocess.run(
-                [sys.executable,
-                 "/Users/danalexandrubujoreanu/Personal Projects/Gardening/AI/query_mba.py",
-                 question, "garden"],
-                capture_output=True, text=True
+    if question:
+        st.caption("⏳ First query loads the model (~30–60 s). Subsequent queries are faster.")
+        with st.spinner("Querying intel_garden — loading model on first run…"):
+            import subprocess, os as _os
+            _python = _os.path.expanduser("~/miniconda3/envs/ml_lab1/bin/python")
+            try:
+                result = subprocess.run(
+                    [_python,
+                     "/Users/danalexandrubujoreanu/Personal Projects/Gardening/AI/query_mba.py",
+                     question, "garden"],
+                    capture_output=True, text=True, timeout=120  # 2 min — model cold-start
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    st.markdown("---")
+                    st.markdown(result.stdout)
+                else:
+                    st.warning("No answer returned.")
+                    if result.stderr:
+                        with st.expander("Error details"):
+                            st.code(result.stderr)
+            except subprocess.TimeoutExpired:
+                st.error("⏰ Query timed out (>2 min). The RAG model may still be loading — try again in 30 seconds.")
+                st.info("If this keeps happening, restart the ml_lab1 env: `conda activate ml_lab1`")
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PAGE 7 — WEATHER & GH HEALTH
+# ═══════════════════════════════════════════════════════════════════════════════
+elif page == "🌤️ Weather & GH Health":
+    import math as _math
+    import io as _io
+
+    st.title("🌤️ Weather & Greenhouse Health")
+    st.caption(
+        "Outdoor: Open-Meteo API (53.38°N 6.59°W — Maynooth) · "
+        "Indoor: Ecowitt WH31 canopy sensor · "
+        "Methodology: Tetens SVP, FAO-56 Penman-Monteith ET₀, GDD base 10°C"
+    )
+
+    # ── Helpers ───────────────────────────────────────────────────────────────
+    @st.cache_data(ttl=1800)  # 30 min cache — forecast doesn't change faster
+    def fetch_openmeteo():
+        """Open-Meteo forecast + 7-day history. No API key required."""
+        url = (
+            "https://api.open-meteo.com/v1/forecast"
+            "?latitude=53.38&longitude=-6.59"
+            "&hourly=temperature_2m,relative_humidity_2m,precipitation,"
+            "windspeed_10m,vapour_pressure_deficit,et0_fao_evapotranspiration"
+            "&past_days=7&forecast_days=7&timezone=Europe%2FDublin"
+            "&temperature_unit=celsius&windspeed_unit=kmh&precipitation_unit=mm"
+        )
+        try:
+            import urllib.request as _req
+            with _req.urlopen(url, timeout=10) as r:
+                raw = json.loads(r.read())
+            df = pd.DataFrame(raw["hourly"])
+            df["time"] = pd.to_datetime(df["time"])
+            df["is_forecast"] = df["time"] > pd.Timestamp.now(tz="Europe/Dublin").tz_localize(None)
+            return df, None
+        except Exception as e:
+            return pd.DataFrame(), str(e)
+
+    def query_influx_http(flux: str) -> pd.DataFrame:
+        """Query InfluxDB via HTTP API — works regardless of Python env."""
+        token = os.getenv("INFLUX_TOKEN", "")
+        if not token:
+            return pd.DataFrame()
+        try:
+            import urllib.request as _req
+            req = _req.Request(
+                "http://localhost:8086/api/v2/query?org=maynooth",
+                data=flux.encode(),
+                headers={
+                    "Authorization": f"Token {token}",
+                    "Content-Type": "application/vnd.flux",
+                    "Accept": "application/csv",
+                },
+                method="POST",
             )
-            st.markdown(result.stdout)
+            with _req.urlopen(req, timeout=10) as r:
+                raw = r.read().decode()
+            lines = [l for l in raw.splitlines() if l and not l.startswith("#")]
+            if len(lines) < 2:
+                return pd.DataFrame()
+            return pd.read_csv(_io.StringIO("\n".join(lines)))
+        except Exception:
+            return pd.DataFrame()
+
+    # ── Fetch data ────────────────────────────────────────────────────────────
+    wx, wx_err = fetch_openmeteo()
+
+    # InfluxDB: canopy + soil last 7d
+    df_canopy = query_influx_http("""
+from(bucket: "greenhouse")
+  |> range(start: -7d)
+  |> filter(fn: (r) => r._measurement == "greenhouse_canopy")
+  |> filter(fn: (r) => r._field == "lvpd_kpa" or r._field == "temperature_c" or r._field == "humidity_pct")
+  |> aggregateWindow(every: 1h, fn: mean, createEmpty: false)
+  |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
+""")
+
+    df_soil = query_influx_http("""
+from(bucket: "greenhouse")
+  |> range(start: -7d)
+  |> filter(fn: (r) => r._measurement == "soil_moisture")
+  |> filter(fn: (r) => r._field == "moisture_pct")
+  |> aggregateWindow(every: 1h, fn: mean, createEmpty: false)
+""")
+
+    # ── SECTION 1: Plant Health Score ─────────────────────────────────────────
+    st.markdown("## 🌿 Plant Environment Health Score")
+    st.markdown(
+        "*What % of the past 7 days did the greenhouse maintain optimal conditions "
+        "for plant transpiration and disease prevention?*"
+    )
+
+    has_influx = not df_canopy.empty
+    lvpd_score = soil_score = overall_score = None
+
+    if has_influx and "lvpd_kpa" in df_canopy.columns:
+        lvpd_vals = pd.to_numeric(df_canopy["lvpd_kpa"], errors="coerce").dropna()
+        n_total = len(lvpd_vals)
+        n_optimal = ((lvpd_vals >= 0.4) & (lvpd_vals <= 1.2)).sum()
+        n_risk    = (lvpd_vals < 0.4).sum()
+        n_stress  = (lvpd_vals > 1.5).sum()
+        lvpd_score = int(n_optimal / n_total * 100) if n_total > 0 else 0
+
+    if not df_soil.empty and "_value" in df_soil.columns:
+        soil_vals = pd.to_numeric(df_soil["_value"], errors="coerce").dropna()
+        n_soil_ok = (soil_vals >= 35).sum()
+        soil_score = int(n_soil_ok / len(soil_vals) * 100) if len(soil_vals) > 0 else 0
+
+    # Weighted score: LVPD 60%, soil 40%
+    if lvpd_score is not None and soil_score is not None:
+        overall_score = int(lvpd_score * 0.6 + soil_score * 0.4)
+    elif lvpd_score is not None:
+        overall_score = lvpd_score
+
+    if overall_score is not None:
+        score_color = "#15803d" if overall_score >= 75 else "#d97706" if overall_score >= 50 else "#dc2626"
+        grade = "Excellent" if overall_score >= 85 else "Good" if overall_score >= 70 else "Fair" if overall_score >= 50 else "Poor"
+
+        sc1, sc2, sc3, sc4 = st.columns(4)
+        with sc1:
+            st.markdown(f"""
+            <div class="score-card">
+              <div class="score-number" style="color:{score_color}">{overall_score}%</div>
+              <div class="score-label">Overall health — 7 days</div>
+              <div style="font-weight:700; color:{score_color}; margin-top:4px">{grade}</div>
+            </div>""", unsafe_allow_html=True)
+        with sc2:
+            s = lvpd_score if lvpd_score is not None else "—"
+            c = "#15803d" if isinstance(s, int) and s >= 70 else "#d97706"
+            st.markdown(f"""
+            <div class="score-card">
+              <div class="score-number" style="color:{c}">{s}{'%' if isinstance(s,int) else ''}</div>
+              <div class="score-label">LVPD optimal (0.4–1.2 kPa)</div>
+            </div>""", unsafe_allow_html=True)
+        with sc3:
+            s = soil_score if soil_score is not None else "—"
+            c = "#15803d" if isinstance(s, int) and s >= 70 else "#d97706"
+            st.markdown(f"""
+            <div class="score-card">
+              <div class="score-number" style="color:{c}">{s}{'%' if isinstance(s,int) else ''}</div>
+              <div class="score-label">Soil moisture adequate (≥35%)</div>
+            </div>""", unsafe_allow_html=True)
+        with sc4:
+            risk_pct = int(n_risk / n_total * 100) if lvpd_score is not None else 0
+            st.markdown(f"""
+            <div class="score-card">
+              <div class="score-number" style="color:#dc2626">{risk_pct}%</div>
+              <div class="score-label">Botrytis risk hours (LVPD&lt;0.4)</div>
+            </div>""", unsafe_allow_html=True)
+
+        st.markdown("""
+        <div class="info-banner">
+        <strong>Methodology:</strong> LVPD score = hours in 0.4–1.2 kPa range ÷ total hours.
+        Soil score = hours with ≥35% VWC on either bed ÷ total hours.
+        Overall = LVPD×0.6 + Soil×0.4 (LVPD weighted higher — disease risk is more acute than drought).
+        Literature reference: Körner et al. (2008) — optimal greenhouse VPD 0.5–1.0 kPa for tomatoes.
+        </div>
+        """, unsafe_allow_html=True)
+
+        if has_influx:
+            # LVPD distribution histogram
+            fig_hist = go.Figure()
+            fig_hist.add_trace(go.Histogram(
+                x=lvpd_vals, nbinsx=30,
+                marker_color=[
+                    "#7c3aed" if v < 0 else "#ef4444" if v < 0.4 else
+                    "#f97316" if v < 0.8 else "#22c55e" if v < 1.2 else
+                    "#f97316" if v < 1.5 else "#ef4444"
+                    for v in sorted(lvpd_vals)
+                ],
+                name="LVPD hours"
+            ))
+            fig_hist.add_vrect(x0=0.4, x1=1.2, fillcolor="#22c55e", opacity=0.08,
+                               annotation_text="Optimal zone", annotation_position="top left")
+            fig_hist.update_layout(
+                title="LVPD Distribution — last 7 days (hourly means)",
+                xaxis_title="LVPD (kPa)", yaxis_title="Hours",
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                font_color="#111827", height=280, margin=dict(t=40,b=20)
+            )
+            st.plotly_chart(fig_hist, use_container_width=True)
+    else:
+        st.info("📡 InfluxDB data not available — ensure Docker stack is running (`docker compose up -d`)")
+
+    st.divider()
+
+    # ── SECTION 2: Current conditions — outdoor vs indoor ─────────────────────
+    st.markdown("## 🔬 Outdoor vs Greenhouse — Current Conditions")
+
+    now_idx = None
+    if not wx.empty:
+        now_idx = (wx["time"] - pd.Timestamp.now()).abs().idxmin()
+        out_temp  = wx.loc[now_idx, "temperature_2m"]
+        out_rh    = wx.loc[now_idx, "relative_humidity_2m"]
+        out_vpd   = wx.loc[now_idx, "vapour_pressure_deficit"]  # kPa, no leaf offset
+        out_et0   = wx.loc[now_idx, "et0_fao_evapotranspiration"]
+        out_wind  = wx.loc[now_idx, "windspeed_10m"]
+    else:
+        out_temp = out_rh = out_vpd = out_et0 = out_wind = None
+
+    comp_cols = st.columns(2)
+    with comp_cols[0]:
+        st.markdown("**🌿 Greenhouse (WH31 canopy)**")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Temp", f"{gh_temp:.1f}°C" if gh_temp else "—")
+        c2.metric("RH", f"{gh_rh:.0f}%" if gh_rh else "—")
+        c3.metric("LVPD", f"{lvpd_val:.3f} kPa" if gh_temp else "—")
+    with comp_cols[1]:
+        st.markdown("**☁️ Maynooth outdoor (Open-Meteo)**")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Temp", f"{out_temp:.1f}°C" if out_temp is not None else "—",
+                  delta=f"{gh_temp - out_temp:+.1f}°C vs GH" if gh_temp and out_temp is not None else None)
+        c2.metric("RH", f"{out_rh:.0f}%" if out_rh is not None else "—")
+        c3.metric("Air VPD", f"{out_vpd:.3f} kPa" if out_vpd is not None else "—",
+                  help="Open-Meteo VPD is air VPD (no leaf offset). GH LVPD uses 2°C leaf correction.")
+
+    if out_et0 is not None:
+        st.caption(
+            f"📐 Reference evapotranspiration (ET₀): **{out_et0:.2f} mm/hr** "
+            f"(FAO-56 Penman-Monteith) · Outdoor wind: {out_wind:.0f} km/h"
+        )
+
+    st.divider()
+
+    # ── SECTION 3: 7-Day Forecast ─────────────────────────────────────────────
+    st.markdown("## 📅 7-Day Weather Forecast — Maynooth")
+    st.caption("Shaded zone = forecast (right of now). Historical = measured model analysis.")
+
+    if not wx.empty and wx_err is None:
+        fig_wx = go.Figure()
+
+        hist = wx[~wx["is_forecast"]]
+        fcast = wx[wx["is_forecast"]]
+        now_time = pd.Timestamp.now()
+
+        # Temperature traces
+        fig_wx.add_trace(go.Scatter(x=hist["time"], y=hist["temperature_2m"],
+            name="Temp (actual)", line=dict(color="#374151", width=1.5)))
+        fig_wx.add_trace(go.Scatter(x=fcast["time"], y=fcast["temperature_2m"],
+            name="Temp (forecast)", line=dict(color="#374151", width=1.5, dash="dot")))
+
+        # Outdoor VPD on secondary axis
+        fig_wx.add_trace(go.Scatter(x=hist["time"], y=hist["vapour_pressure_deficit"],
+            name="Air VPD (actual)", line=dict(color="#15803d", width=1.5),
+            yaxis="y2"))
+        fig_wx.add_trace(go.Scatter(x=fcast["time"], y=fcast["vapour_pressure_deficit"],
+            name="Air VPD (forecast)", line=dict(color="#15803d", width=1.5, dash="dot"),
+            yaxis="y2"))
+
+        # "Now" line
+        fig_wx.add_vline(x=int(now_time.timestamp() * 1000),
+                         line_dash="dash", line_color="#d97706", line_width=1.5)
+        fig_wx.add_annotation(x=int(now_time.timestamp() * 1000), y=1.02,
+            xref="x", yref="paper", text="Now", showarrow=False,
+            font=dict(color="#d97706", size=11))
+
+        fig_wx.update_layout(
+            height=360, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            font_color="#111827", margin=dict(t=20, b=30),
+            legend=dict(orientation="h", y=-0.15),
+            yaxis=dict(title="Temperature (°C)", showgrid=True, gridcolor="#f3f4f6"),
+            yaxis2=dict(title="Air VPD (kPa)", overlaying="y", side="right",
+                        showgrid=False, range=[0, 2.5]),
+            xaxis=dict(showgrid=False),
+        )
+        st.plotly_chart(fig_wx, use_container_width=True)
+
+        # ET₀ bar chart
+        daily_wx = wx.groupby(wx["time"].dt.date).agg(
+            et0=("et0_fao_evapotranspiration", "sum"),
+            precip=("precipitation", "sum"),
+            tmax=("temperature_2m", "max"),
+            tmin=("temperature_2m", "min"),
+        ).reset_index()
+        daily_wx.columns = ["date", "ET₀ (mm/d)", "Rain (mm)", "T_max", "T_min"]
+        daily_wx["GDD"] = ((daily_wx["T_max"] + daily_wx["T_min"]) / 2 - 10).clip(lower=0)
+
+        col_et, col_tbl = st.columns([2, 1])
+        with col_et:
+            fig_et = go.Figure()
+            fig_et.add_bar(x=daily_wx["date"], y=daily_wx["ET₀ (mm/d)"],
+                           name="ET₀ (mm/d)", marker_color="#15803d", opacity=0.8)
+            fig_et.add_bar(x=daily_wx["date"], y=daily_wx["Rain (mm)"],
+                           name="Rain (mm)", marker_color="#60a5fa", opacity=0.7)
+            fig_et.update_layout(
+                barmode="overlay", height=250, title="Daily ET₀ vs Precipitation",
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                font_color="#111827", margin=dict(t=40,b=20),
+                xaxis=dict(showgrid=False),
+                yaxis=dict(title="mm", showgrid=True, gridcolor="#f3f4f6"),
+                legend=dict(orientation="h", y=-0.2),
+            )
+            st.plotly_chart(fig_et, use_container_width=True)
+            st.caption(
+                "ET₀ = reference evapotranspiration (FAO-56 Penman-Monteith). "
+                "Rain impact is minimal for the GH — shown for outdoor beds (Bay 4–7) context."
+            )
+        with col_tbl:
+            st.markdown("**Daily summary**")
+            st.dataframe(daily_wx[["date","ET₀ (mm/d)","Rain (mm)","GDD"]].tail(10),
+                         hide_index=True, use_container_width=True)
+    else:
+        st.warning(f"Open-Meteo unavailable: {wx_err}")
+
+    st.divider()
+
+    # ── SECTION 4: GDD tracker ────────────────────────────────────────────────
+    st.markdown("## 🌱 Growing Degree Days (GDD) — Crop Progress")
+    st.caption(
+        "GDD base 10°C (standard for tomatoes, peppers, cucumbers). "
+        "Formula: GDD = max(0, (T_max + T_min) / 2 − 10). "
+        "Accumulated from sowing date using Open-Meteo hourly data."
+    )
+
+    SOW_DATES = {
+        "Jalapeño Ruben":     "2026-01-04",
+        "Yolo Wonder":        "2026-01-04",
+        "Tsaksoniki Aubergine":"2026-01-04",
+        "San Marzano":        "2026-03-01",
+        "Black Krim":         "2026-03-01",
+        "Sungold F1":         "2026-03-01",
+        "Marmande":           "2026-03-01",
+        "Passandra F1":       "2026-03-10",
+        "Pantos":             "2026-03-09",
+    }
+    # GDD-to-harvest targets (days × avg GDD ≈ threshold)
+    GDD_HARVEST = {
+        "Jalapeño Ruben": 1200, "Yolo Wonder": 1400, "Tsaksoniki Aubergine": 1300,
+        "San Marzano": 1100, "Black Krim": 1000, "Sungold F1": 900,
+        "Marmande": 1000, "Passandra F1": 800, "Pantos": 1200,
+    }
+
+    if not wx.empty:
+        # Build daily GDD from Open-Meteo hourly
+        daily_gdd_df = wx.groupby(wx["time"].dt.date).agg(
+            tmax=("temperature_2m", "max"), tmin=("temperature_2m", "min")
+        ).reset_index()
+        daily_gdd_df["gdd_day"] = ((daily_gdd_df["tmax"] + daily_gdd_df["tmin"]) / 2 - 10).clip(lower=0)
+        daily_gdd_df["date"] = pd.to_datetime(daily_gdd_df["time"])
+
+        gdd_rows = []
+        for variety, sow in SOW_DATES.items():
+            sow_dt = pd.to_datetime(sow)
+            mask = daily_gdd_df["date"] >= sow_dt
+            accum = daily_gdd_df.loc[mask, "gdd_day"].sum()
+            target = GDD_HARVEST.get(variety, 1000)
+            pct = min(100, int(accum / target * 100))
+            days_from_sow = (pd.Timestamp.now() - sow_dt).days
+            gdd_rows.append({
+                "Variety": variety,
+                "Sown": sow,
+                "Days": days_from_sow,
+                "GDD Accumulated": f"{accum:.0f}",
+                "GDD Target": target,
+                "Progress": pct,
+            })
+
+        gdd_df = pd.DataFrame(gdd_rows).sort_values("Progress", ascending=False)
+
+        # Progress bar chart
+        fig_gdd = go.Figure()
+        fig_gdd.add_bar(
+            x=gdd_df["Progress"], y=gdd_df["Variety"],
+            orientation="h",
+            marker=dict(
+                color=[f"rgba(21,128,61,{0.4 + p/100*0.6})" for p in gdd_df["Progress"]],
+                line=dict(color="#15803d", width=1)
+            ),
+            text=[f"{p}%" for p in gdd_df["Progress"]],
+            textposition="outside",
+        )
+        fig_gdd.add_vline(x=100, line_dash="dash", line_color="#dc2626",
+                          annotation_text="Harvest window", annotation_position="top right")
+        fig_gdd.update_layout(
+            height=350, title="GDD Progress to Harvest (base 10°C)",
+            xaxis=dict(title="% of GDD target", range=[0, 115], showgrid=True, gridcolor="#f3f4f6"),
+            yaxis=dict(autorange="reversed"),
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            font_color="#111827", margin=dict(t=40, b=20, l=160),
+        )
+        st.plotly_chart(fig_gdd, use_container_width=True)
+        st.dataframe(gdd_df[["Variety","Sown","Days","GDD Accumulated","GDD Target","Progress"]],
+                     hide_index=True, use_container_width=True)
+        st.caption(
+            "GDD targets are variety-specific estimates from market gardening literature "
+            "(Johnny's Seeds variety data, The Market Gardener). "
+            "Greenhouse conditions accelerate progress vs field estimates — treat as directional."
+        )

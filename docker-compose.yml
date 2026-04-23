@@ -53,6 +53,9 @@ services:
       - INFLUX_TOKEN=${INFLUX_TOKEN}
       - INFLUX_ORG=${INFLUX_ORG}
       - INFLUX_BUCKET=${INFLUX_BUCKET}
+      # ── Alerting: routes via n8n (shared Sparc stack) → Pushover ───────────
+      # No credentials needed here — n8n owns the Pushover token.
+      # Webhook URL: http://host.docker.internal:5678/webhook/gh-alert
     depends_on:
       influxdb:
         condition: service_healthy

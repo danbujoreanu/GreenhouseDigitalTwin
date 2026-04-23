@@ -1,0 +1,187 @@
+apiVersion: 1
+
+# ── Alert Rules — Greenhouse Digital Twin ────────────────────────────────────
+# All rules evaluate every 5 minutes (aligned with poller cadence).
+# Conditions use Flux queries against InfluxDB bucket "greenhouse".
+
+groups:
+
+  - orgId: 1
+    name: greenhouse-climate
+    folder: Greenhouse
+    interval: 5m
+    rules:
+
+      # ── 1. Botrytis Risk ──────────────────────────────────────────────────
+      # LVPD below 0.4 kPa = air too humid, condensation likely on leaves
+      # Especially dangerous overnight when vents are closed
+      - uid: botrytis-risk
+        title: Botrytis Risk
+        condition: C
+        for: 10m
+        annotations:
+          summary: "⚠️ GH humidity critical — LVPD {{ $values.A }} kPa. Condensation risk on leaves. Check fan is running."
+          description: "LVPD has been below 0.4 kPa for 10+ minutes. Botrytis risk is HIGH."
+        labels:
+          severity: critical
+          zone: canopy
+        data:
+          - refId: A
+            datasourceUid: greenhouse-influxdb
+            relativeTimeRange: {from: 600, to: 0}
+            model:
+              datasource: {type: influxdb, uid: greenhouse-influxdb}
+              query: "from(bucket: \"greenhouse\")\n  |> range(start: -10m)\n  |> filter(fn: (r) => r._measurement == \"greenhouse_canopy\" and r._field == \"lvpd_kpa\")\n  |> mean()"
+              refId: A
+          - refId: C
+            datasourceUid: "-100"
+            relativeTimeRange: {from: 600, to: 0}
+            model:
+              conditions:
+                - evaluator: {params: [0.4], type: lt}
+                  operator: {type: and}
+                  query: {params: [A]}
+                  reducer: {params: [], type: last}
+                  type: query
+              datasource: {type: "__expr__", uid: "-100"}
+              expression: A
+              refId: C
+              type: classic_conditions
+
+      # ── 2. Heat Stress ────────────────────────────────────────────────────
+      # Canopy temp above 32°C = wilting risk, especially for capsicums/aubergines
+      - uid: heat-stress
+        title: Heat Stress
+        condition: C
+        for: 10m
+        annotations:
+          summary: "🔥 GH overheating — canopy {{ $values.A }}°C. Open door + vents immediately."
+          description: "Canopy temperature has been above 32°C for 10+ minutes."
+        labels:
+          severity: critical
+          zone: canopy
+        data:
+          - refId: A
+            datasourceUid: greenhouse-influxdb
+            relativeTimeRange: {from: 600, to: 0}
+            model:
+              datasource: {type: influxdb, uid: greenhouse-influxdb}
+              query: "from(bucket: \"greenhouse\")\n  |> range(start: -10m)\n  |> filter(fn: (r) => r._measurement == \"greenhouse_canopy\" and r._field == \"temperature_c\")\n  |> mean()"
+              refId: A
+          - refId: C
+            datasourceUid: "-100"
+            relativeTimeRange: {from: 600, to: 0}
+            model:
+              conditions:
+                - evaluator: {params: [32], type: gt}
+                  operator: {type: and}
+                  query: {params: [A]}
+                  reducer: {params: [], type: last}
+                  type: query
+              datasource: {type: "__expr__", uid: "-100"}
+              expression: A
+              refId: C
+              type: classic_conditions
+
+      # ── 3. Water Stress (high LVPD) ───────────────────────────────────────
+      # LVPD above 1.5 kPa = plants transpiring too fast, soil may be dry
+      - uid: water-stress
+        title: Water Stress
+        condition: C
+        for: 20m
+        annotations:
+          summary: "💧 GH water stress — LVPD {{ $values.A }} kPa. Plants may need watering. Check soil sensors."
+          description: "LVPD has been above 1.5 kPa for 20+ minutes. Soil check recommended."
+        labels:
+          severity: warning
+          zone: canopy
+        data:
+          - refId: A
+            datasourceUid: greenhouse-influxdb
+            relativeTimeRange: {from: 1200, to: 0}
+            model:
+              datasource: {type: influxdb, uid: greenhouse-influxdb}
+              query: "from(bucket: \"greenhouse\")\n  |> range(start: -20m)\n  |> filter(fn: (r) => r._measurement == \"greenhouse_canopy\" and r._field == \"lvpd_kpa\")\n  |> mean()"
+              refId: A
+          - refId: C
+            datasourceUid: "-100"
+            relativeTimeRange: {from: 1200, to: 0}
+            model:
+              conditions:
+                - evaluator: {params: [1.5], type: gt}
+                  operator: {type: and}
+                  query: {params: [A]}
+                  reducer: {params: [], type: last}
+                  type: query
+              datasource: {type: "__expr__", uid: "-100"}
+              expression: A
+              refId: C
+              type: classic_conditions
+
+      # ── 4. Dry Soil — GH4 North ───────────────────────────────────────────
+      - uid: dry-soil-gh4n
+        title: Dry Soil GH4 North
+        condition: C
+        for: 15m
+        annotations:
+          summary: "🌱 Soil dry in GH4 North — {{ $values.A }}%. Water the north bed today."
+          description: "GH4 North soil moisture below 25% for 15+ minutes."
+        labels:
+          severity: warning
+          zone: GH4N
+        data:
+          - refId: A
+            datasourceUid: greenhouse-influxdb
+            relativeTimeRange: {from: 900, to: 0}
+            model:
+              datasource: {type: influxdb, uid: greenhouse-influxdb}
+              query: "from(bucket: \"greenhouse\")\n  |> range(start: -15m)\n  |> filter(fn: (r) => r._measurement == \"soil_moisture\" and r._field == \"moisture_pct\" and r.zone == \"GH4N\")\n  |> last()"
+              refId: A
+          - refId: C
+            datasourceUid: "-100"
+            relativeTimeRange: {from: 900, to: 0}
+            model:
+              conditions:
+                - evaluator: {params: [25], type: lt}
+                  operator: {type: and}
+                  query: {params: [A]}
+                  reducer: {params: [], type: last}
+                  type: query
+              datasource: {type: "__expr__", uid: "-100"}
+              expression: A
+              refId: C
+              type: classic_conditions
+
+      # ── 5. Dry Soil — GH4 South ───────────────────────────────────────────
+      - uid: dry-soil-gh4s
+        title: Dry Soil GH4 South
+        condition: C
+        for: 15m
+        annotations:
+          summary: "🌱 Soil dry in GH4 South — {{ $values.A }}%. Water the south bed today."
+          description: "GH4 South soil moisture below 25% for 15+ minutes."
+        labels:
+          severity: warning
+          zone: GH4S
+        data:
+          - refId: A
+            datasourceUid: greenhouse-influxdb
+            relativeTimeRange: {from: 900, to: 0}
+            model:
+              datasource: {type: influxdb, uid: greenhouse-influxdb}
+              query: "from(bucket: \"greenhouse\")\n  |> range(start: -15m)\n  |> filter(fn: (r) => r._measurement == \"soil_moisture\" and r._field == \"moisture_pct\" and r.zone == \"GH4S\")\n  |> last()\n"
+              refId: A
+          - refId: C
+            datasourceUid: "-100"
+            relativeTimeRange: {from: 900, to: 0}
+            model:
+              conditions:
+                - evaluator: {params: [25], type: lt}
+                  operator: {type: and}
+                  query: {params: [A]}
+                  reducer: {params: [], type: last}
+                  type: query
+              datasource: {type: "__expr__", uid: "-100"}
+              expression: A
+              refId: C
+              type: classic_conditions

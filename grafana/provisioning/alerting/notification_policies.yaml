@@ -1,0 +1,17 @@
+apiVersion: 1
+
+# ── Notification Policy — routes all GH alerts → n8n → Pushover ──────────────
+
+policies:
+  - orgId: 1
+    receiver: greenhouse-n8n
+    group_by: ['alertname']
+    group_wait: 30s
+    group_interval: 5m
+    repeat_interval: 4h
+    routes:
+      # Critical alerts (botrytis, heat stress) — repeat every 1h while firing
+      - receiver: greenhouse-n8n
+        matchers:
+          - alertname =~ "Botrytis Risk|Heat Stress"
+        repeat_interval: 1h
