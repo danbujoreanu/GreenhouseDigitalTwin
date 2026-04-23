@@ -69,8 +69,6 @@ This project investigates whether consumer-grade IoT hardware and open-source so
 
 ## Greenhouse Layout
 
-![Greenhouse Zone Layout](assets/diagrams/diagram_3_gh_layout.png)
-
 ![GH Planting Map — Season 2026](assets/diagrams/GH_Planting_Map_v10.png)
 
 ## Sensor Stack
