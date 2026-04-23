@@ -21,6 +21,8 @@ This project investigates whether consumer-grade IoT hardware and open-source so
 
 ## System Architecture
 
+![System Architecture](assets/diagrams/diagram_2_ecosystem.png)
+
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │  DATA SOURCES                                                        │
@@ -64,6 +66,12 @@ This project investigates whether consumer-grade IoT hardware and open-source so
 ```
 
 ---
+
+## Greenhouse Layout
+
+![Greenhouse Zone Layout](assets/diagrams/diagram_3_gh_layout.png)
+
+![GH Planting Map — Season 2026](assets/diagrams/GH_Planting_Map_v10.png)
 
 ## Sensor Stack
 
@@ -134,6 +142,10 @@ def calc_lvpd(T_air: float, rh: float, leaf_offset: float = 2.0) -> float:
 Reference: Körner et al. (2008), *Crop Science* — optimal GH VPD 0.5–1.0 kPa for Solanaceae.
 
 ---
+
+## Automation Logic — 3-Gate Irrigation
+
+![Irrigation Automation Logic](assets/diagrams/diagram_4_automation.png)
 
 ## Plant Environment Health Score
 
