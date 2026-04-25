@@ -1232,7 +1232,7 @@ from(bucket: "greenhouse")
                 canopy_h = pd.Series(dtype=float)
             else:
                 _ct = df_canopy[["_time", "lvpd_kpa"]].copy()
-                _ct["_time"] = pd.to_datetime(_ct["_time"]).dt.floor("h")
+                _ct["_time"] = pd.to_datetime(_ct["_time"], utc=True).dt.tz_localize(None).dt.floor("h")
                 canopy_h = _ct.groupby("_time")["lvpd_kpa"].mean().rename("indoor_lvpd")
             if not canopy_h.empty:
                 buf = hist_wx.join(canopy_h, how="inner")
