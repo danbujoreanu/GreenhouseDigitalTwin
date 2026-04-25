@@ -32,6 +32,7 @@ DEVICE_MAC      = os.getenv("ECOWITT_DEVICE_MAC", "")
 # ── Pushover (user-triggered notifications from Streamlit) ────────────────────
 PUSHOVER_GH_TOKEN  = os.getenv("PUSHOVER_GH_TOKEN", "")
 PUSHOVER_USER_KEY  = os.getenv("PUSHOVER_USER_KEY", "")
+FAN_INSTALLED      = os.getenv("FAN_INSTALLED", "false").lower() == "true"
 
 def send_pushover(message: str, title: str = "🌿 Greenhouse", priority: int = 0) -> bool:
     """Send a Pushover notification via the DT Greenhouse app.
@@ -48,6 +49,69 @@ def send_pushover(message: str, title: str = "🌿 Greenhouse", priority: int = 
         return r.json().get("status") == 1
     except Exception:
         return False
+
+# ── Open-Meteo: current conditions (shared across pages) ─────────────────────
+# WMO weather code → (label, emoji)  — subset covering Irish conditions
+_WMO = {
+    0: ("Clear sky", "☀️"), 1: ("Mainly clear", "🌤️"), 2: ("Partly cloudy", "⛅"),
+    3: ("Overcast", "☁️"), 45: ("Fog", "🌫️"), 48: ("Icy fog", "🌫️"),
+    51: ("Light drizzle", "🌦️"), 53: ("Drizzle", "🌦️"), 55: ("Heavy drizzle", "🌧️"),
+    61: ("Light rain", "🌧️"), 63: ("Rain", "🌧️"), 65: ("Heavy rain", "🌧️"),
+    80: ("Rain showers", "🌧️"), 81: ("Showers", "🌧️"), 82: ("Heavy showers", "⛈️"),
+    95: ("Thunderstorm", "⛈️"), 96: ("Thunderstorm + hail", "⛈️"),
+}
+
+_GH_LAT = os.getenv("GH_LATITUDE", "53.38")
+_GH_LON = os.getenv("GH_LONGITUDE", "-6.59")
+
+@st.cache_data(ttl=300)
+def fetch_ecowitt():
+    """Fetch live sensor data from Ecowitt Cloud API. 5-min cache."""
+    if not all([ECOWITT_APP_KEY, ECOWITT_API_KEY, DEVICE_MAC]):
+        return None, "Missing credentials in .env"
+    try:
+        r = requests.get(
+            "https://api.ecowitt.net/api/v3/device/real_time",
+            params={
+                "application_key": ECOWITT_APP_KEY, "api_key": ECOWITT_API_KEY,
+                "mac": DEVICE_MAC, "call_back": "all",
+                "cycle_type": "auto", "temp_unitid": 1,
+            },
+            timeout=10
+        )
+        body = r.json()
+        if body.get("code") != 0:
+            return None, f"API error {body.get('code')}: {body.get('msg')}"
+        return body.get("data", {}), None
+    except Exception as e:
+        return None, str(e)
+
+@st.cache_data(ttl=1800)
+def fetch_current_weather():
+    """Fetch current + 7-day hourly from Open-Meteo. No API key. 30-min cache."""
+    import urllib.request as _req
+    import io as _io
+    url = (
+        "https://api.open-meteo.com/v1/forecast"
+        f"?latitude={_GH_LAT}&longitude={_GH_LON}"
+        "&hourly=temperature_2m,relative_humidity_2m,precipitation,"
+        "windspeed_10m,vapour_pressure_deficit,et0_fao_evapotranspiration,"
+        "shortwave_radiation,weather_code"
+        "&current_weather=true"
+        "&past_days=7&forecast_days=7&timezone=Europe%2FDublin"
+        "&temperature_unit=celsius&windspeed_unit=kmh&precipitation_unit=mm"
+    )
+    try:
+        with _req.urlopen(url, timeout=10) as r:
+            import json as _json
+            raw = _json.loads(r.read())
+        current = raw.get("current_weather", {})
+        df = pd.DataFrame(raw["hourly"])
+        df["time"] = pd.to_datetime(df["time"])
+        df["is_forecast"] = df["time"] > pd.Timestamp.now(tz="Europe/Dublin").tz_localize(None)
+        return current, df, None
+    except Exception as e:
+        return {}, pd.DataFrame(), str(e)
 
 # ── LVPD engine ───────────────────────────────────────────────────────────────
 def svp(T): return 0.6108 * math.exp(17.27 * T / (T + 237.3))
@@ -261,7 +325,8 @@ with st.sidebar:
     page = st.radio(
         "Navigate",
         ["🌡️ Live Greenhouse", "🌱 Production", "📋 Season Pipeline",
-         "⏱️ Time & ROI", "💰 Finance", "🌤️ Weather & GH Health", "🤖 Ask the Garden"],
+         "⏱️ Time & ROI", "💰 Finance", "🌤️ Weather & GH Health",
+         "🤖 Ask the Garden", "👁️ Vision & Phenology"],
         label_visibility="collapsed"
     )
     st.divider()
@@ -269,7 +334,10 @@ with st.sidebar:
     st.markdown("**System status**")
     st.markdown('<span class="status-pill pill-ok">🟢 Sensors live</span>', unsafe_allow_html=True)
     st.markdown('<span class="status-pill pill-ok">🟢 RAG ready</span>', unsafe_allow_html=True)
-    st.markdown('<span class="status-pill pill-info">🔵 Fan: AC1100 paired</span>', unsafe_allow_html=True)
+    if FAN_INSTALLED:
+        st.markdown('<span class="status-pill pill-info">🔵 Fan: AC1100 paired</span>', unsafe_allow_html=True)
+    else:
+        st.markdown('<span class="status-pill" style="background:#f3f4f6;color:#6b7280;border:1px solid #e5e7eb">⏳ Fan: not yet installed</span>', unsafe_allow_html=True)
     st.divider()
     st.caption(f"Refreshed: {datetime.now().strftime('%H:%M:%S')}")
     if st.button("🔄 Refresh data", use_container_width=True):
@@ -282,27 +350,7 @@ with st.sidebar:
 if page == "🌡️ Live Greenhouse":
     st.title("🌡️ Live Greenhouse Status")
 
-    @st.cache_data(ttl=300)
-    def fetch_ecowitt():
-        if not all([ECOWITT_APP_KEY, ECOWITT_API_KEY, DEVICE_MAC]):
-            return None, "Missing credentials in .env"
-        try:
-            r = requests.get(
-                "https://api.ecowitt.net/api/v3/device/real_time",
-                params={
-                    "application_key": ECOWITT_APP_KEY, "api_key": ECOWITT_API_KEY,
-                    "mac": DEVICE_MAC, "call_back": "all",
-                    "cycle_type": "auto", "temp_unitid": 1,
-                },
-                timeout=10
-            )
-            body = r.json()
-            if body.get("code") != 0:
-                return None, f"API error {body.get('code')}: {body.get('msg')}"
-            return body.get("data", {}), None
-        except Exception as e:
-            return None, str(e)
-
+    # fetch_ecowitt() defined at module level
     data, err = fetch_ecowitt()
 
     if err:
@@ -336,6 +384,10 @@ if page == "🌡️ Live Greenhouse":
 
     lvpd_val = calc_lvpd(gh_temp, gh_rh)
     zone_label, zone_color, zone_action = lvpd_zone(lvpd_val)
+    soil_low = soil_ch1 < 35 or soil_ch2 < 35
+    # Override action text using combined LVPD + soil context
+    if lvpd_val > 1.5:
+        zone_action = "Irrigate + ventilate" if soil_low else "Ventilate now — soil OK"
 
     # ── Top row: key metrics ──────────────────────────────────────────────────
     c1, c2, c3, c4, c5 = st.columns(5)
@@ -359,23 +411,28 @@ if page == "🌡️ Live Greenhouse":
          display: flex; align-items: center; gap: 24px;'>
       <div>
         <span style='color:{zone_color}; font-size:1.15em; font-weight:700'>{zone_label}</span>
-        &nbsp; → &nbsp;<span style='color:#d1fae5'>{zone_action}</span>
+        &nbsp; → &nbsp;<span style='color:#374151; font-weight:500'>{zone_action}</span>
         &nbsp;&nbsp;<span style='color:#6b7280; font-size:0.85em'>LVPD = {lvpd_val:.3f} kPa</span>
       </div>
       <div style='margin-left:auto'>
-        <span class='status-pill {fan_pill_class}'>🌀 Fan: {fan_status}</span>
-        &nbsp;
-        <span class='status-pill pill-info'>📡 AC1100 paired</span>
+        {"<span class='status-pill " + fan_pill_class + "'>🌀 Fan: " + fan_status + "</span>&nbsp;<span class='status-pill pill-info'>📡 AC1100 paired</span>" if FAN_INSTALLED else "<span class='status-pill' style='background:#f3f4f6;color:#6b7280;border:1px solid #e5e7eb'>⏳ Fan: not installed</span>"}
       </div>
     </div>
     """, unsafe_allow_html=True)
 
     # ── Irrigation recommendation + partner alert ─────────────────────────────
-    needs_water = (soil_ch1 < 35 or soil_ch2 < 35) and lvpd_val > 0.4
+    heat_stress  = lvpd_val > 1.5
+    lvpd_optimal = 0.8 <= lvpd_val <= 1.2
+    needs_water  = soil_low and lvpd_val > 0.4
     col_irr, col_btn = st.columns([3, 1])
     with col_irr:
-        st.info("💧 **Irrigation recommended** — soil moisture low" if needs_water
-                else "✅ **No irrigation needed** — soil moisture adequate")
+        if needs_water and heat_stress:
+            st.error("⚠️ **Dry soil + heat stress — irrigate immediately, then ventilate.**")
+        elif needs_water:
+            st.info("💧 **Irrigation recommended** — soil moisture low")
+        elif lvpd_optimal and not soil_low:
+            st.success("✅ **Conditions good** — LVPD optimal, soil moisture adequate")
+        # else: LVPD zone banner already communicates the risk — no duplicate card
     with col_btn:
         if st.button("📲 Send water reminder", help="Push Pushover alert to phone"):
             beds = []
@@ -385,6 +442,48 @@ if page == "🌡️ Live Greenhouse":
                    f"Dry beds: {', '.join(beds) if beds else 'none'}")
             ok = send_pushover(msg, title="🌿 GH Water Reminder", priority=0)
             st.success("✅ Reminder sent!") if ok else st.warning("⚠️ Pushover not configured")
+
+    # ── Outdoor weather card (Open-Meteo) ────────────────────────────────────
+    cur_wx, _wx_df, _wx_err = fetch_current_weather()
+    if cur_wx:
+        wx_code   = int(cur_wx.get("weathercode", 1))
+        wx_label, wx_emoji = _WMO.get(wx_code, ("Unknown", "🌡️"))
+        wx_temp   = cur_wx.get("temperature", "—")
+        wx_wind   = cur_wx.get("windspeed", "—")
+        wx_is_day = cur_wx.get("is_day", 1)
+        # Precip in next 3 h from hourly
+        rain_soon = ""
+        if not _wx_df.empty and "precipitation" in _wx_df.columns:
+            now_ts = pd.Timestamp.now(tz="Europe/Dublin").tz_localize(None)
+            nxt3 = _wx_df[(_wx_df["time"] >= now_ts) & (_wx_df["time"] < now_ts + pd.Timedelta(hours=3))]
+            total_rain = nxt3["precipitation"].sum() if not nxt3.empty else 0
+            rain_soon = f"🌧️ {total_rain:.1f} mm rain next 3h" if total_rain > 0.1 else "☂️ No rain next 3h"
+        # GH vs outdoor delta
+        temp_delta = gh_temp - wx_temp if isinstance(wx_temp, (int, float)) else None
+        delta_str = f"+{temp_delta:.1f}°C GH heating" if temp_delta and temp_delta >= 0 else (
+                    f"{temp_delta:.1f}°C" if temp_delta else "")
+        day_night = "☀️ Day" if wx_is_day else "🌙 Night"
+        st.markdown(f"""
+        <div style='background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px;
+             padding:12px 20px; margin:10px 0; display:flex; align-items:center; gap:20px;
+             flex-wrap:wrap;'>
+          <div style='font-size:2em; line-height:1'>{wx_emoji}</div>
+          <div>
+            <div style='font-weight:700; color:#111827; font-size:1em'>Outdoor — Maynooth now</div>
+            <div style='color:#374151; font-size:0.95em'>{wx_label} &nbsp;·&nbsp; {day_night}</div>
+          </div>
+          <div style='display:flex; gap:28px; flex-wrap:wrap; margin-left:8px'>
+            <div><span style='color:#6b7280; font-size:0.8em'>TEMP</span><br/>
+              <b style='color:#111827'>{wx_temp}°C</b>
+              {"&nbsp;<span style='color:#15803d; font-size:0.8em'>" + delta_str + "</span>" if delta_str else ""}
+            </div>
+            <div><span style='color:#6b7280; font-size:0.8em'>WIND</span><br/>
+              <b style='color:#111827'>{wx_wind} km/h</b></div>
+            <div><span style='color:#6b7280; font-size:0.8em'>RAIN</span><br/>
+              <b style='color:#111827; font-size:0.85em'>{rain_soon}</b></div>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
 
     # ── LVPD gauge ───────────────────────────────────────────────────────────
     fig = go.Figure(go.Indicator(
@@ -454,10 +553,43 @@ elif page == "🌱 Production":
         "Jalapeño Ruben": 2.0, "Broad Beans": 3.0,
     }
 
+    # ── Harvest entry form ────────────────────────────────────────────────────
+    with st.expander("➕ Log a harvest", expanded=df.empty):
+        with st.form("harvest_form", clear_on_submit=True):
+            fc1, fc2, fc3 = st.columns(3)
+            variety = fc1.selectbox("Variety", list(PRICES.keys()))
+            zone = fc2.selectbox("Zone", ["GH1N","GH1S","GH2N","GH2S","GH3N","GH3S",
+                                          "GH4N","GH4S","GH5N","GH5S","GH6N","GH6S",
+                                          "Bay3","Bay4","Bay5","Bay6","Bay7"])
+            quality = fc3.slider("Quality (1–5)", 1, 5, 4)
+            fw1, fw2 = st.columns(2)
+            weight_kg = fw1.number_input("Weight (kg)", min_value=0.0, step=0.05, format="%.3f")
+            count = fw2.number_input("Count (optional, e.g. chillis)", min_value=0, step=1)
+            notes = st.text_input("Notes (optional)")
+            submitted = st.form_submit_button("💾 Save harvest")
+            if submitted:
+                if weight_kg == 0 and count == 0:
+                    st.warning("Enter weight or count.")
+                else:
+                    harvest_path = SEASON / "HARVEST_LOG_2026.csv"
+                    row = {
+                        "date": datetime.now().strftime("%Y-%m-%d"),
+                        "variety": variety, "zone": zone,
+                        "weight_kg": weight_kg if weight_kg > 0 else "",
+                        "count": count if count > 0 else "",
+                        "quality": quality, "notes": notes,
+                    }
+                    file_exists = harvest_path.exists()
+                    with open(harvest_path, "a", newline="") as f:
+                        w = csv.DictWriter(f, fieldnames=row.keys())
+                        if not file_exists:
+                            w.writeheader()
+                        w.writerow(row)
+                    st.success(f"✅ Logged {weight_kg:.3f} kg {variety} from {zone}")
+                    st.cache_data.clear()
+
     if df.empty:
         st.info("📭 No harvest data yet. First tomatoes expected July 2026.")
-        st.markdown("**Log a harvest:**")
-        st.code('python Greenhouse/digital_twin/log_harvest.py harvest "San Marzano" --kg 0.45 --zone GH2N --quality 5', language="bash")
     else:
         total_kg = df["weight_kg"].sum()
         total_val = df["value_eur"].sum()
@@ -784,29 +916,24 @@ elif page == "🌤️ Weather & GH Health":
         "Methodology: Tetens SVP, FAO-56 Penman-Monteith ET₀, GDD base 10°C"
     )
 
-    # ── Helpers ───────────────────────────────────────────────────────────────
-    @st.cache_data(ttl=1800)  # 30 min cache — forecast doesn't change faster
-    def fetch_openmeteo():
-        """Open-Meteo forecast + 7-day history. No API key required."""
-        url = (
-            "https://api.open-meteo.com/v1/forecast"
-            "?latitude=53.38&longitude=-6.59"
-            "&hourly=temperature_2m,relative_humidity_2m,precipitation,"
-            "windspeed_10m,vapour_pressure_deficit,et0_fao_evapotranspiration"
-            "&past_days=7&forecast_days=7&timezone=Europe%2FDublin"
-            "&temperature_unit=celsius&windspeed_unit=kmh&precipitation_unit=mm"
-        )
-        try:
-            import urllib.request as _req
-            with _req.urlopen(url, timeout=10) as r:
-                raw = json.loads(r.read())
-            df = pd.DataFrame(raw["hourly"])
-            df["time"] = pd.to_datetime(df["time"])
-            df["is_forecast"] = df["time"] > pd.Timestamp.now(tz="Europe/Dublin").tz_localize(None)
-            return df, None
-        except Exception as e:
-            return pd.DataFrame(), str(e)
+    # ── Live GH readings (reuse module-level fetch) ───────────────────────────
+    _ew_data, _ew_err = fetch_ecowitt()
+    def _safe(d, *keys):
+        for k in keys:
+            if not isinstance(d, dict): return None
+            d = d.get(k)
+        return d.get("value") if isinstance(d, dict) else None
+    _d = _ew_data or {}
+    def _tof(v):
+        try: return float(v)
+        except (TypeError, ValueError): return None
+    gh_temp = _tof(_safe(_d, "temp_and_humidity_ch1", "temperature") or _safe(_d, "indoor", "temperature"))
+    gh_rh   = _tof(_safe(_d, "temp_and_humidity_ch1", "humidity")   or _safe(_d, "indoor", "humidity"))
+    if gh_temp is None: gh_temp, gh_rh = 22.0, 65.0  # demo fallback
+    lvpd_val = calc_lvpd(gh_temp, gh_rh)
 
+    # ── Helpers ───────────────────────────────────────────────────────────────
+    # fetch_current_weather() defined at module level — reused here
     def query_influx_http(flux: str) -> pd.DataFrame:
         """Query InfluxDB via HTTP API — works regardless of Python env."""
         token = os.getenv("INFLUX_TOKEN", "")
@@ -834,7 +961,7 @@ elif page == "🌤️ Weather & GH Health":
             return pd.DataFrame()
 
     # ── Fetch data ────────────────────────────────────────────────────────────
-    wx, wx_err = fetch_openmeteo()
+    _cur_wx, wx, wx_err = fetch_current_weather()  # wx = hourly DataFrame
 
     # InfluxDB: canopy + soil last 7d
     df_canopy = query_influx_http("""
@@ -1042,9 +1169,13 @@ from(bucket: "greenhouse")
             precip=("precipitation", "sum"),
             tmax=("temperature_2m", "max"),
             tmin=("temperature_2m", "min"),
+            rad=("shortwave_radiation", "sum"),
         ).reset_index()
-        daily_wx.columns = ["date", "ET₀ (mm/d)", "Rain (mm)", "T_max", "T_min"]
+        daily_wx.columns = ["date", "ET₀ (mm/d)", "Rain (mm)", "T_max", "T_min", "Rad_Wh"]
         daily_wx["GDD"] = ((daily_wx["T_max"] + daily_wx["T_min"]) / 2 - 10).clip(lower=0)
+        # DLI: 1 W/m² ≈ 2.1 μmol/m²/s PAR; hourly data → ×3600s; sum already in Wh/m²
+        # DLI (mol/m²/d) = Σ(hourly_W/m²) × 3600 × 2.1 / 1_000_000
+        daily_wx["DLI (mol/m²/d)"] = (daily_wx["Rad_Wh"] * 3600 * 2.1 / 1_000_000).round(1)
 
         col_et, col_tbl = st.columns([2, 1])
         with col_et:
@@ -1053,23 +1184,80 @@ from(bucket: "greenhouse")
                            name="ET₀ (mm/d)", marker_color="#15803d", opacity=0.8)
             fig_et.add_bar(x=daily_wx["date"], y=daily_wx["Rain (mm)"],
                            name="Rain (mm)", marker_color="#60a5fa", opacity=0.7)
+            fig_et.add_scatter(x=daily_wx["date"], y=daily_wx["DLI (mol/m²/d)"],
+                               name="DLI (mol/m²/d)", mode="lines+markers",
+                               line=dict(color="#f59e0b", width=2),
+                               yaxis="y2")
             fig_et.update_layout(
-                barmode="overlay", height=250, title="Daily ET₀ vs Precipitation",
+                barmode="overlay", height=280,
+                title="Daily ET₀ · Precipitation · DLI (Daily Light Integral)",
                 paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                font_color="#111827", margin=dict(t=40,b=20),
+                font_color="#111827", margin=dict(t=40, b=20),
                 xaxis=dict(showgrid=False),
                 yaxis=dict(title="mm", showgrid=True, gridcolor="#f3f4f6"),
-                legend=dict(orientation="h", y=-0.2),
+                yaxis2=dict(title="DLI (mol/m²/d)", overlaying="y", side="right",
+                            showgrid=False, range=[0, 30]),
+                legend=dict(orientation="h", y=-0.25),
             )
+            # Tomato optimal DLI band (15–22 mol/m²/d)
+            fig_et.add_hrect(y0=15, y1=22, yref="y2", fillcolor="#bbf7d0",
+                             opacity=0.15, line_width=0,
+                             annotation_text="Tomato optimal DLI (15–22)", annotation_position="top right",
+                             annotation_font_size=10, annotation_font_color="#15803d")
             st.plotly_chart(fig_et, use_container_width=True)
             st.caption(
-                "ET₀ = reference evapotranspiration (FAO-56 Penman-Monteith). "
-                "Rain impact is minimal for the GH — shown for outdoor beds (Bay 4–7) context."
+                "DLI = Daily Light Integral (mol/m²/d) — cumulative photosynthetically active radiation. "
+                "Irish cloud cover frequently suppresses DLI below the 15 mol/m²/d tomato threshold. "
+                "ET₀ = FAO-56 Penman-Monteith reference evapotranspiration."
             )
         with col_tbl:
             st.markdown("**Daily summary**")
-            st.dataframe(daily_wx[["date","ET₀ (mm/d)","Rain (mm)","GDD"]].tail(10),
+            st.dataframe(daily_wx[["date","ET₀ (mm/d)","Rain (mm)","GDD","DLI (mol/m²/d)"]].tail(10),
                          hide_index=True, use_container_width=True)
+
+        # ── VPD Buffer Coefficient ────────────────────────────────────────────
+        st.markdown("### 🔬 Greenhouse Buffer Coefficient — Outdoor VPD vs Indoor LVPD")
+        st.caption(
+            "The delta (Outdoor Air VPD − Indoor LVPD) quantifies the greenhouse glass as a climate buffer. "
+            "A stable positive delta during outdoor spikes proves the structure is protecting the crop."
+        )
+        if not df_canopy.empty and "vapour_pressure_deficit" in wx.columns:
+            # Align hourly Open-Meteo with InfluxDB canopy data
+            hist_wx = wx[~wx["is_forecast"]].copy()
+            hist_wx = hist_wx.set_index("time")[["vapour_pressure_deficit"]].rename(
+                columns={"vapour_pressure_deficit": "outdoor_vpd"})
+            # df_canopy is already pivot()-ed: lvpd_kpa is a direct column (no _field/_value)
+            if "lvpd_kpa" not in df_canopy.columns:
+                st.info(f"Buffer coefficient: lvpd_kpa not in InfluxDB columns {list(df_canopy.columns)[:8]}. Check Docker stack.")
+                canopy_h = pd.Series(dtype=float)
+            else:
+                _ct = df_canopy[["_time", "lvpd_kpa"]].copy()
+                _ct["_time"] = pd.to_datetime(_ct["_time"]).dt.floor("h")
+                canopy_h = _ct.groupby("_time")["lvpd_kpa"].mean().rename("indoor_lvpd")
+            if not canopy_h.empty:
+                buf = hist_wx.join(canopy_h, how="inner")
+                buf["buffer_delta"] = buf["outdoor_vpd"] - buf["indoor_lvpd"]
+                fig_buf = go.Figure()
+                fig_buf.add_scatter(x=buf.index, y=buf["outdoor_vpd"],
+                                    name="Outdoor Air VPD (kPa)", line=dict(color="#ef4444", width=1.5))
+                fig_buf.add_scatter(x=buf.index, y=buf["indoor_lvpd"],
+                                    name="Indoor LVPD (kPa)", line=dict(color="#22c55e", width=1.5))
+                fig_buf.add_scatter(x=buf.index, y=buf["buffer_delta"],
+                                    name="Buffer Δ (outdoor − indoor)", line=dict(color="#f59e0b", width=1.5, dash="dot"))
+                fig_buf.add_hrect(y0=0, y1=0.4, fillcolor="#bbf7d0", opacity=0.1, line_width=0)
+                fig_buf.update_layout(
+                    height=300, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                    font_color="#111827", margin=dict(t=20, b=20),
+                    yaxis=dict(title="VPD / LVPD (kPa)", showgrid=True, gridcolor="#f3f4f6"),
+                    xaxis=dict(showgrid=False),
+                    legend=dict(orientation="h", y=-0.25),
+                )
+                st.plotly_chart(fig_buf, use_container_width=True)
+            else:
+                st.info("InfluxDB LVPD history needed for buffer coefficient — check Docker stack.")
+        else:
+            st.info("Buffer coefficient requires both Open-Meteo and InfluxDB data.")
+
     else:
         st.warning(f"Open-Meteo unavailable: {wx_err}")
 
@@ -1157,3 +1345,78 @@ from(bucket: "greenhouse")
             "(Johnny's Seeds variety data, The Market Gardener). "
             "Greenhouse conditions accelerate progress vs field estimates — treat as directional."
         )
+
+# ═══════════════════════════════════════════════════════════════════════════════
+elif page == "👁️ Vision & Phenology":
+    import json as _json
+    st.title("👁️ Vision & Phenology")
+    st.caption(
+        "Computer vision layer — YOLOv8 object detection for ripeness tracking and plant phenology. "
+        "Phase 3 (Jul 2026). Currently awaiting camera hardware."
+    )
+
+    VISION_IMG  = ROOT / "Greenhouse" / "vision" / "latest.jpg"
+    VISION_JSON = ROOT / "Greenhouse" / "vision" / "latest.json"
+
+    col_img, col_metrics = st.columns([2, 1])
+
+    with col_img:
+        st.markdown("**Latest GH frame**")
+        if VISION_IMG.exists():
+            st.image(str(VISION_IMG), use_column_width=True)
+        else:
+            st.markdown("""
+            <div style='background:#f3f4f6; border:2px dashed #d1d5db; border-radius:12px;
+                 padding:60px; text-align:center; color:#6b7280'>
+              <div style='font-size:3em'>📷</div>
+              <div style='font-weight:600; margin-top:12px'>Camera not connected</div>
+              <div style='font-size:0.85em; margin-top:6px'>
+                Place latest.jpg from the GH camera at<br/>
+                <code>Greenhouse/vision/latest.jpg</code>
+              </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+    with col_metrics:
+        st.markdown("**YOLOv8 detection**")
+        if VISION_JSON.exists():
+            try:
+                det = _json.loads(VISION_JSON.read_text())
+                red   = int(det.get("red_tomatoes", 0))
+                green = int(det.get("green_tomatoes", 0))
+                total = red + green
+                ratio = round(red / total * 100, 1) if total > 0 else 0
+                st.metric("🔴 Ripe tomatoes", red)
+                st.metric("🟢 Unripe tomatoes", green)
+                st.metric("Ripeness ratio", f"{ratio}%",
+                          delta=f"{ratio - 50:.0f}% vs 50% threshold")
+            except Exception as e:
+                st.warning(f"Could not parse detection JSON: {e}")
+        else:
+            st.info("No detection data yet.")
+            st.markdown("""
+            **Expected JSON format:**
+            ```json
+            {
+              "red_tomatoes": 12,
+              "green_tomatoes": 28,
+              "timestamp": "2026-07-15T14:30:00"
+            }
+            ```
+            Place at `Greenhouse/vision/latest.json`
+            """)
+
+    st.divider()
+    st.markdown("### Roadmap")
+    st.markdown("""
+    | Phase | Feature | Status |
+    |-------|---------|--------|
+    | 3 (Jul 2026) | USB/IP camera → latest.jpg pipeline | ⏳ Pending hardware |
+    | 3 (Jul 2026) | YOLOv8 inference script (local, no cloud) | ⏳ Pending |
+    | 3.5 (Aug 2026) | Ripeness ratio → harvest alert via Pushover | ⏳ Pending |
+    | 4 (2027) | Phenology tracking — leaf area index, disease detection | 🔵 Research |
+    """)
+    st.caption(
+        "Reference: YOLOv8 (Ultralytics) — runs on Apple Silicon without GPU. "
+        "Inference time ~50ms/frame on M4. No cloud dependency."
+    )

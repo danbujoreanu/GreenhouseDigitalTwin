@@ -124,9 +124,9 @@ docker exec -it gh_influxdb influx
 
 ---
 
-## Phase 2 (June — Mac Mini M5): local push mode
+## Phase 2 (June — Mac Mini M4): local push mode
 
-When Mac Mini M5 arrives:
+When Mac Mini M4 arrives:
 1. Configure GW3000 Customized Upload → Mac Mini local IP (port 8080)
 2. Add a Flask ingestion service to docker-compose.yml
 3. GW3000 pushes every 60s → Flask → InfluxDB (no cloud polling needed)

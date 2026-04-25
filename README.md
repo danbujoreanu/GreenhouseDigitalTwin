@@ -200,7 +200,7 @@ This project is building toward a full-season predictive model — analogous to 
 | 3.5 | Backfill pipeline · 90-day training dataset complete | 🔵 Jun 2026 |
 | 4 | Random Forest · soil prediction · harvest window model | 🔵 Jul 2026 |
 | 5 | WFC01 autonomous irrigation · 3-gate logic | 🔵 Aug 2026 |
-| 6 | Streamlit served via Tailscale from Mac Mini M5 | 🔵 Jul–Aug 2026 |
+| 6 | Streamlit served via Tailscale from Mac Mini M4 | 🔵 Jul–Aug 2026 |
 | 7 | Full 2026 dataset labelled → 2027 model trained | 2027 |
 
 ---
