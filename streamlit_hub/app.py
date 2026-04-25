@@ -1196,7 +1196,7 @@ from(bucket: "greenhouse")
                 xaxis=dict(showgrid=False),
                 yaxis=dict(title="mm", showgrid=True, gridcolor="#f3f4f6"),
                 yaxis2=dict(title="DLI (mol/m²/d)", overlaying="y", side="right",
-                            showgrid=False, range=[0, 30]),
+                            showgrid=False, autorange=True),
                 legend=dict(orientation="h", y=-0.25),
             )
             # Tomato optimal DLI band (15–22 mol/m²/d)
