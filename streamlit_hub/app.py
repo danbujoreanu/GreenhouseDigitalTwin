@@ -1177,27 +1177,55 @@ from(bucket: "greenhouse")
         # DLI (mol/m²/d) = Σ(hourly_W/m²) × 3600 × 2.1 / 1_000_000
         daily_wx["DLI (mol/m²/d)"] = (daily_wx["Rad_Wh"] * 3600 * 2.1 / 1_000_000).round(1)
 
+        # Split daily_wx into actual vs forecast
+        today_date = datetime.now().date()
+        daily_actual   = daily_wx[daily_wx["date"] <= today_date]
+        daily_forecast = daily_wx[daily_wx["date"] >  today_date]
+
         col_et, col_tbl = st.columns([2, 1])
         with col_et:
             fig_et = go.Figure()
-            fig_et.add_bar(x=daily_wx["date"], y=daily_wx["ET₀ (mm/d)"],
-                           name="ET₀ (mm/d)", marker_color="#15803d", opacity=0.8)
-            fig_et.add_bar(x=daily_wx["date"], y=daily_wx["Rain (mm)"],
+            # Actual bars — solid
+            fig_et.add_bar(x=daily_actual["date"], y=daily_actual["ET₀ (mm/d)"],
+                           name="ET₀ (mm/d)", marker_color="#15803d", opacity=0.85)
+            fig_et.add_bar(x=daily_actual["date"], y=daily_actual["Rain (mm)"],
                            name="Rain (mm)", marker_color="#60a5fa", opacity=0.7)
-            fig_et.add_scatter(x=daily_wx["date"], y=daily_wx["DLI (mol/m²/d)"],
+            # Forecast bars — lighter, hatched pattern via opacity
+            if not daily_forecast.empty:
+                fig_et.add_bar(x=daily_forecast["date"], y=daily_forecast["ET₀ (mm/d)"],
+                               name="ET₀ forecast", marker_color="#15803d", opacity=0.35,
+                               marker_pattern_shape="/", showlegend=True)
+                fig_et.add_bar(x=daily_forecast["date"], y=daily_forecast["Rain (mm)"],
+                               name="Rain forecast", marker_color="#60a5fa", opacity=0.3,
+                               marker_pattern_shape="/", showlegend=True)
+            # DLI line — actual solid, forecast dashed
+            fig_et.add_scatter(x=daily_actual["date"], y=daily_actual["DLI (mol/m²/d)"],
                                name="DLI (mol/m²/d)", mode="lines+markers",
-                               line=dict(color="#f59e0b", width=2),
-                               yaxis="y2")
+                               line=dict(color="#f59e0b", width=2), yaxis="y2")
+            if not daily_forecast.empty:
+                # Connect the last actual point to first forecast point
+                connect_dates = list(daily_actual["date"].tail(1)) + list(daily_forecast["date"])
+                connect_dli   = list(daily_actual["DLI (mol/m²/d)"].tail(1)) + list(daily_forecast["DLI (mol/m²/d)"])
+                fig_et.add_scatter(x=connect_dates, y=connect_dli,
+                                   name="DLI forecast", mode="lines+markers",
+                                   line=dict(color="#f59e0b", width=2, dash="dot"),
+                                   marker=dict(symbol="circle-open"),
+                                   yaxis="y2", showlegend=True)
+            # Today vertical line
+            fig_et.add_vline(x=str(today_date), line_dash="dash", line_color="#6b7280", line_width=1)
+            fig_et.add_annotation(x=str(today_date), y=1.05, xref="x", yref="paper",
+                                  text="Today", showarrow=False,
+                                  font=dict(size=10, color="#6b7280"))
             fig_et.update_layout(
-                barmode="overlay", height=280,
+                barmode="overlay", height=300,
                 title="Daily ET₀ · Precipitation · DLI (Daily Light Integral)",
                 paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                font_color="#111827", margin=dict(t=40, b=20),
+                font_color="#111827", margin=dict(t=45, b=20),
                 xaxis=dict(showgrid=False),
                 yaxis=dict(title="mm", showgrid=True, gridcolor="#f3f4f6"),
                 yaxis2=dict(title="DLI (mol/m²/d)", overlaying="y", side="right",
                             showgrid=False, autorange=True),
-                legend=dict(orientation="h", y=-0.25),
+                legend=dict(orientation="h", y=-0.3),
             )
             # Tomato optimal DLI band (15–22 mol/m²/d)
             fig_et.add_hrect(y0=15, y1=22, yref="y2", fillcolor="#bbf7d0",
