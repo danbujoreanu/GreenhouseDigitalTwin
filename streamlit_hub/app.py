@@ -392,13 +392,17 @@ if page == "🌡️ Live Greenhouse":
     # ── Top row: key metrics ──────────────────────────────────────────────────
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("🌡️ Canopy Temp", f"{gh_temp:.1f} °C",
-              delta=f"{gh_temp - 18:.1f}°C vs 18°C target")
+              delta=f"{gh_temp - 18:.1f}°C vs 18°C min",
+              delta_color="normal")
     c2.metric("💧 Humidity", f"{gh_rh:.0f} %")
-    c3.metric("🌬️ LVPD", f"{lvpd_val:.3f} kPa", delta=zone_label)
+    c3.metric("🌬️ LVPD", f"{lvpd_val:.3f} kPa", delta=zone_label,
+              delta_color="off")
     c4.metric("🌱 Soil GH4N", f"{soil_ch1:.0f} %",
-              delta="Low" if soil_ch1 < 30 else "OK")
+              delta="Low" if soil_ch1 < 35 else "OK",
+              delta_color="inverse" if soil_ch1 < 35 else "off")
     c5.metric("🌱 Soil GH4S", f"{soil_ch2:.0f} %",
-              delta="Low" if soil_ch2 < 30 else "OK")
+              delta="Low" if soil_ch2 < 35 else "OK",
+              delta_color="inverse" if soil_ch2 < 35 else "off")
 
     # ── LVPD zone indicator ───────────────────────────────────────────────────
     fan_rh_threshold = 85.0
