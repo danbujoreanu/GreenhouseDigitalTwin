@@ -337,7 +337,7 @@ with st.sidebar:
     if FAN_INSTALLED:
         st.markdown('<span class="status-pill pill-info">🔵 Fan: AC1100 paired</span>', unsafe_allow_html=True)
     else:
-        st.markdown('<span class="status-pill" style="background:#f3f4f6;color:#6b7280;border:1px solid #e5e7eb">⏳ Fan: not yet installed</span>', unsafe_allow_html=True)
+        st.markdown('<span class="status-pill" style="background:rgba(255,255,255,0.1);color:#d1d5db;border:1px solid rgba(255,255,255,0.2)">⏳ Fan: not installed</span>', unsafe_allow_html=True)
     st.divider()
     st.caption(f"Refreshed: {datetime.now().strftime('%H:%M:%S')}")
     if st.button("🔄 Refresh data", use_container_width=True):
