@@ -9,6 +9,7 @@ Run:  streamlit run streamlit_hub/app.py
 import os
 import math
 import csv
+import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -22,7 +23,62 @@ from dotenv import load_dotenv
 # ── Path resolution ───────────────────────────────────────────────────────────
 ROOT = Path(__file__).parent.parent        # -> digital_twin/
 SEASON = ROOT.parent.parent / "Season"     # -> Gardening/Season/
+BIOLOGY_DB = SEASON / "biology.db"
 load_dotenv(ROOT / ".env")
+
+# ── SQLite biology DB ─────────────────────────────────────────────────────────
+def init_biology_db():
+    """
+    Create Season/biology.db with harvest_log table if not exists.
+    On first run, migrates any real rows from HARVEST_LOG_2026.csv (idempotent).
+    """
+    con = sqlite3.connect(BIOLOGY_DB)
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS harvest_log (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            date       TEXT    NOT NULL,
+            variety    TEXT    NOT NULL,
+            zone       TEXT    NOT NULL,
+            weight_kg  REAL    NOT NULL DEFAULT 0.0,
+            count      INTEGER,
+            quality    INTEGER,
+            notes      TEXT,
+            created_at TEXT    DEFAULT (datetime('now'))
+        )
+    """)
+    con.commit()
+
+    # One-time CSV migration — only runs if DB is empty and CSV has real data
+    existing = con.execute("SELECT COUNT(*) FROM harvest_log").fetchone()[0]
+    if existing == 0:
+        csv_path = SEASON / "HARVEST_LOG_2026.csv"
+        if csv_path.exists():
+            with open(csv_path, newline="") as f:
+                reader = csv.DictReader(row for row in f if not row.startswith("#"))
+                migrated = 0
+                for row in reader:
+                    variety = (row.get("variety") or "").strip()
+                    if not variety or variety.startswith("#"):
+                        continue
+                    con.execute(
+                        "INSERT INTO harvest_log (date, variety, zone, weight_kg, count, quality, notes) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            row.get("date", "").strip(),
+                            variety,
+                            row.get("zone", "").strip(),
+                            float(row.get("weight_kg") or 0),
+                            int(row.get("count") or 0) or None,
+                            int(row.get("quality") or 0) or None,
+                            row.get("notes", "").strip() or None,
+                        )
+                    )
+                    migrated += 1
+                if migrated:
+                    con.commit()
+    con.close()
+
+init_biology_db()
 
 # ── Ecowitt credentials ───────────────────────────────────────────────────────
 ECOWITT_APP_KEY = os.getenv("ECOWITT_APPLICATION_KEY", "")
@@ -629,15 +685,19 @@ elif page == "🌱 Production":
 
     @st.cache_data(ttl=60)
     def load_harvest():
-        path = SEASON / "HARVEST_LOG_2026.csv"
         try:
-            df = pd.read_csv(path, comment="#")
-            df = df[df["variety"].notna() & ~df["variety"].str.startswith("#", na=True)]
+            con = sqlite3.connect(BIOLOGY_DB)
+            df = pd.read_sql_query(
+                "SELECT date, variety, zone, weight_kg, count, quality, notes "
+                "FROM harvest_log ORDER BY date ASC",
+                con
+            )
+            con.close()
             df["date"] = pd.to_datetime(df["date"], errors="coerce")
             df["weight_kg"] = pd.to_numeric(df["weight_kg"], errors="coerce").fillna(0)
             df["value_eur"] = df["variety"].map(PRICES).fillna(3.0) * df["weight_kg"]
             return df
-        except FileNotFoundError:
+        except Exception:
             return pd.DataFrame()
 
     df = load_harvest()
@@ -666,20 +726,21 @@ elif page == "🌱 Production":
                 if weight_kg == 0 and count == 0:
                     st.warning("Enter weight or count.")
                 else:
-                    harvest_path = SEASON / "HARVEST_LOG_2026.csv"
-                    row = {
-                        "date": datetime.now().strftime("%Y-%m-%d"),
-                        "variety": variety, "zone": zone,
-                        "weight_kg": weight_kg if weight_kg > 0 else "",
-                        "count": count if count > 0 else "",
-                        "quality": quality, "notes": notes,
-                    }
-                    file_exists = harvest_path.exists()
-                    with open(harvest_path, "a", newline="") as f:
-                        w = csv.DictWriter(f, fieldnames=row.keys())
-                        if not file_exists:
-                            w.writeheader()
-                        w.writerow(row)
+                    con = sqlite3.connect(BIOLOGY_DB)
+                    con.execute(
+                        "INSERT INTO harvest_log (date, variety, zone, weight_kg, count, quality, notes) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            datetime.now().strftime("%Y-%m-%d"),
+                            variety, zone,
+                            float(weight_kg) if weight_kg > 0 else 0.0,
+                            int(count) if count > 0 else None,
+                            int(quality),
+                            notes.strip() or None,
+                        )
+                    )
+                    con.commit()
+                    con.close()
                     st.success(f"✅ Logged {weight_kg:.3f} kg {variety} from {zone}")
                     st.cache_data.clear()
 
@@ -802,14 +863,16 @@ elif page == "⏱️ Time & ROI":
 
     @st.cache_data(ttl=60)
     def load_harvest_for_roi():
-        path = SEASON / "HARVEST_LOG_2026.csv"
         try:
-            df = pd.read_csv(path, comment="#")
-            df = df[df["variety"].notna() & ~df["variety"].str.startswith("#", na=True)]
+            con = sqlite3.connect(BIOLOGY_DB)
+            df = pd.read_sql_query(
+                "SELECT variety, weight_kg FROM harvest_log", con
+            )
+            con.close()
             df["weight_kg"] = pd.to_numeric(df["weight_kg"], errors="coerce").fillna(0)
             df["value_eur"] = df["variety"].map(PRICES).fillna(3.0) * df["weight_kg"]
             return df["value_eur"].sum()
-        except FileNotFoundError:
+        except Exception:
             return 0.0
 
     df_time = load_time()
