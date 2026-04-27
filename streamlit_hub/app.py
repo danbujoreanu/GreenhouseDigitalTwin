@@ -113,6 +113,43 @@ def fetch_current_weather():
     except Exception as e:
         return {}, pd.DataFrame(), str(e)
 
+@st.cache_data(ttl=21600)
+def fetch_season_weather():
+    """Fetch full season hourly temps from Open-Meteo for LGP/GDD. 6h cache."""
+    import urllib.request as _req, json as _json
+    from datetime import date as _date
+    _season_start = _date(2026, 4, 1)
+    _past_days = min((_date.today() - _season_start).days + 2, 92)
+    _url = (
+        "https://api.open-meteo.com/v1/forecast"
+        f"?latitude={_GH_LAT}&longitude={_GH_LON}"
+        "&hourly=temperature_2m,et0_fao_evapotranspiration"
+        f"&past_days={_past_days}&forecast_days=0&timezone=UTC"
+        "&temperature_unit=celsius"
+    )
+    try:
+        with _req.urlopen(_url, timeout=15) as _r:
+            _raw = _json.loads(_r.read())
+        _df = pd.DataFrame(_raw["hourly"])
+        _df["time"] = pd.to_datetime(_df["time"], format="ISO8601").dt.tz_localize(None)
+        _df = _df[_df["time"] <= pd.Timestamp.now()]
+        return _df, None
+    except Exception as _e:
+        return pd.DataFrame(), str(_e)
+
+
+def _lgp_gdd_from_season(season_df: pd.DataFrame):
+    """Return (lgp_days, gdd_total) from hourly temperature dataframe."""
+    if season_df.empty:
+        return None, None
+    d = season_df.copy()
+    d["date"] = d["time"].dt.date
+    daily = d.groupby("date")["temperature_2m"].agg(["max", "min", "mean"]).reset_index()
+    lgp = int((daily["mean"] > 10.0).sum())
+    gdd = round(((daily["max"] + daily["min"]) / 2 - 10).clip(lower=0).sum(), 1)
+    return lgp, gdd
+
+
 # ── LVPD engine ───────────────────────────────────────────────────────────────
 def svp(T): return 0.6108 * math.exp(17.27 * T / (T + 237.3))
 def calc_lvpd(T, rh, offset=2.0):
@@ -446,6 +483,60 @@ if page == "🌡️ Live Greenhouse":
                    f"Dry beds: {', '.join(beds) if beds else 'none'}")
             ok = send_pushover(msg, title="🌿 GH Water Reminder", priority=0)
             st.success("✅ Reminder sent!") if ok else st.warning("⚠️ Pushover not configured")
+
+    # ── Season Progress: LGP & GDD ───────────────────────────────────────────
+    _ssn_df, _ssn_err = fetch_season_weather()
+    _ssn_day = max(1, (datetime.now() - datetime(2026, 4, 1)).days + 1)
+    _out_lgp, _out_gdd = _lgp_gdd_from_season(_ssn_df)
+
+    # GH LGP + GDD from InfluxDB canopy temp (requires Docker)
+    _gh_lgp, _gh_gdd = None, None
+    _itok = os.getenv("INFLUX_TOKEN", "")
+    if _itok and _out_gdd:
+        try:
+            import urllib.request as _ureq, io as _uio
+            _flux = (
+                f'from(bucket: "{INFLUX_BUCKET}")\n'
+                '  |> range(start: 2026-04-01T00:00:00Z)\n'
+                '  |> filter(fn: (r) => r._measurement == "greenhouse_canopy" and r._field == "temperature_c")\n'
+                '  |> aggregateWindow(every: 1d, fn: mean, createEmpty: false)\n'
+                '  |> keep(columns: ["_time","_value"])'
+            )
+            _qreq = _ureq.Request(
+                f"{os.getenv('INFLUX_URL','http://localhost:8086')}/api/v2/query?org={os.getenv('INFLUX_ORG','maynooth')}",
+                data=_flux.encode(),
+                headers={"Authorization": f"Token {_itok}",
+                         "Content-Type": "application/vnd.flux",
+                         "Accept": "text/csv"})
+            with _ureq.urlopen(_qreq, timeout=5) as _qr:
+                _ghdf = pd.read_csv(_uio.StringIO(_qr.read().decode()))
+            if not _ghdf.empty and "_value" in _ghdf.columns:
+                _ghtemps = pd.to_numeric(_ghdf["_value"], errors="coerce").dropna()
+                _gh_lgp = int((_ghtemps > 10.0).sum())
+                _gh_gdd = round((_ghtemps - 10).clip(lower=0).sum(), 1)
+        except Exception:
+            pass
+
+    st.divider()
+    _p1, _p2, _p3, _p4, _p5 = st.columns(5)
+    _p1.metric("📅 Season Day", f"Day {_ssn_day}", "since Apr 1 2026")
+    _p2.metric("🌍 Outdoor LGP", f"{_out_lgp} d" if _out_lgp else "—", "days >10°C")
+    if _gh_lgp is not None and _out_lgp:
+        _p3.metric("🏡 GH LGP", f"{_gh_lgp} d", f"+{_gh_lgp - _out_lgp}d vs outdoor")
+    else:
+        _p3.metric("🏡 GH LGP", "—", "needs Docker")
+    _p4.metric("☀️ Outdoor GDD", f"{_out_gdd}" if _out_gdd else "—", "base 10°C")
+    if _gh_gdd and _out_gdd and _out_gdd > 0:
+        _mult = round(_gh_gdd / _out_gdd, 2)
+        _p5.metric("🌡️ GH GDD", f"{_gh_gdd}", f"×{_mult} GDD multiplier")
+    else:
+        _p5.metric("🌡️ GH GDD", "—", "needs Docker")
+    st.caption(
+        "LGP = days with mean temp > 10°C (tomato base) · "
+        "GDD = Growing Degree Days accumulated since Apr 1 · "
+        "GH multiplier = how much the glass amplifies thermal energy vs outdoor baseline"
+    )
+    st.divider()
 
     # ── Outdoor weather card (Open-Meteo) ────────────────────────────────────
     cur_wx, _wx_df, _wx_err = fetch_current_weather()
@@ -1293,6 +1384,40 @@ from(bucket: "greenhouse")
     else:
         st.warning(f"Open-Meteo unavailable: {wx_err}")
 
+    st.divider()
+
+    # ── SECTION 3.5: LGP & GDD Multiplier summary ────────────────────────────
+    st.markdown("### 📐 Season LGP & GDD Multiplier")
+    _wx_ssn_df, _ = fetch_season_weather()
+    _wx_out_lgp, _wx_out_gdd = _lgp_gdd_from_season(_wx_ssn_df)
+    _wx_ssn_day = max(1, (datetime.now() - datetime(2026, 4, 1)).days + 1)
+    _wc1, _wc2, _wc3 = st.columns(3)
+    _wc1.metric("📅 Season Day", f"Day {_wx_ssn_day}", "Apr 1 → Oct 31")
+    _wc2.metric("🌍 Outdoor LGP", f"{_wx_out_lgp} days" if _wx_out_lgp else "—",
+                f"of ~200 expected outdoor")
+    _wc3.metric("☀️ Outdoor GDD", f"{_wx_out_gdd}" if _wx_out_gdd else "—",
+                "base 10°C since Apr 1")
+    if has_influx and "temperature_c" in df_canopy.columns:
+        _gh_daily = df_canopy[["_time","temperature_c"]].copy()
+        _gh_daily["_time"] = pd.to_datetime(_gh_daily["_time"], format="ISO8601").dt.tz_localize(None)
+        _gh_daily["date"] = _gh_daily["_time"].dt.date
+        _gh_daily_agg = _gh_daily.groupby("date")["temperature_c"].mean().reset_index()
+        _gh_lgp_wx = int((_gh_daily_agg["temperature_c"] > 10.0).sum())
+        _gh_gdd_wx = round((_gh_daily_agg["temperature_c"] - 10).clip(lower=0).sum(), 1)
+        _wc4, _wc5, _wc6 = st.columns(3)
+        _wc4.metric("🏡 GH LGP", f"{_gh_lgp_wx} days",
+                    f"+{_gh_lgp_wx - _wx_out_lgp}d season extension" if _wx_out_lgp else "vs outdoor")
+        _wc5.metric("🌡️ GH GDD", f"{_gh_gdd_wx}",
+                    f"×{round(_gh_gdd_wx/_wx_out_gdd,2)} vs outdoor" if _wx_out_gdd and _wx_out_gdd > 0 else "")
+        _wc6.metric("🔬 GDD Multiplier", f"×{round(_gh_gdd_wx/_wx_out_gdd,2)}" if _wx_out_gdd and _wx_out_gdd > 0 else "—",
+                    "glass thermal amplification")
+        st.caption(
+            "**GDD Multiplier** = the glass compresses required thermal energy into the unheated LGP window. "
+            "At ×1.5–2×, the greenhouse accumulates in one month what takes two outdoors — "
+            "making varieties like San Marzano (1,100 GDD) viable in an Irish season."
+        )
+    else:
+        st.info("GH LGP and GDD multiplier require InfluxDB — start Docker stack to enable.")
     st.divider()
 
     # ── SECTION 4: GDD tracker ────────────────────────────────────────────────
