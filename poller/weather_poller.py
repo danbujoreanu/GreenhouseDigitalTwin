@@ -19,20 +19,17 @@ Usage:
   # Backfill from a specific date:
   python weather_poller.py --from-date 2026-04-01
 
-Run via n8n Execute Command node at 01:00 daily.
-Requires: influxdb-client, requests, python-dotenv
+Run via gardening-weather-poller Docker service (n8n Execute Command or cron).
+Requires: influxdb3-python, requests, python-dotenv
 """
 
 import os
-import sys
-import math
 import logging
 import argparse
 import requests
-from datetime import datetime, date, timezone, timedelta
+from datetime import datetime, date, timezone
 from dotenv import load_dotenv
-from influxdb_client import InfluxDBClient, Point
-from influxdb_client.client.write_api import SYNCHRONOUS
+from influxdb_client_3 import InfluxDBClient3, Point
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -47,10 +44,9 @@ log = logging.getLogger("weather_poller")
 _ENV_PATH = os.path.join(os.path.dirname(__file__), "..", ".env")
 load_dotenv(_ENV_PATH)
 
-INFLUX_URL    = os.getenv("INFLUX_URL", "http://localhost:8086")
-INFLUX_TOKEN  = os.environ["INFLUX_TOKEN"]
-INFLUX_ORG    = os.getenv("INFLUX_ORG", "maynooth")
-INFLUX_BUCKET = os.getenv("INFLUX_BUCKET", "greenhouse")
+INFLUX_URL      = os.getenv("INFLUX_URL", "http://localhost:8086")
+INFLUX_TOKEN    = os.environ["INFLUX_TOKEN"]
+INFLUX_DATABASE = os.getenv("INFLUX_DATABASE", "greenhouse")
 GH_LAT        = os.getenv("GH_LATITUDE", "53.38")
 GH_LON        = os.getenv("GH_LONGITUDE", "-6.59")
 
@@ -79,7 +75,14 @@ def fetch_open_meteo(past_days: int, forecast_days: int = 1) -> list[dict]:
         f"&temperature_unit=celsius&windspeed_unit=kmh&precipitation_unit=mm"
     )
     log.info(f"Fetching Open-Meteo: past_days={past_days}, forecast_days={forecast_days}")
-    r = requests.get(url, timeout=15)
+    # Retry × 3 — Open-Meteo returns sporadic 502/503 at peak hours (top of hour)
+    import time as _time
+    for attempt in range(1, 4):
+        r = requests.get(url, timeout=15 + attempt * 5)
+        if r.status_code < 500:
+            break
+        log.warning(f"Open-Meteo attempt {attempt} returned {r.status_code} — retrying in {attempt * 10}s")
+        _time.sleep(attempt * 10)
     r.raise_for_status()
     data = r.json()["hourly"]
 
@@ -119,30 +122,49 @@ def is_lgp_day(mean_temp_c: float, et0_mm: float, precip_mm: float) -> bool:
 
 # ── InfluxDB helpers ──────────────────────────────────────────────────────────
 
-def get_latest_stored_time(client: InfluxDBClient) -> datetime | None:
-    """Query InfluxDB for the most recent timestamp in outdoor_weather."""
-    query = f'''
-from(bucket: "{INFLUX_BUCKET}")
-  |> range(start: 2026-01-01T00:00:00Z)
-  |> filter(fn: (r) => r._measurement == "{MEASUREMENT}" and r._field == "temp_c")
-  |> last()
-  |> keep(columns: ["_time"])
-'''
+def get_latest_stored_time(client: InfluxDBClient3) -> datetime | None:
+    """
+    Query InfluxDB 2.7 via Flux HTTP API for latest timestamp in outdoor_weather.
+
+    NOTE: influxdb_client_3 uses gRPC/Arrow Flight for reads, which requires
+    InfluxDB 3.x. The NUC runs InfluxDB 2.7, so we fall back to the Flux
+    HTTP endpoint (/api/v2/query) which is available on both 2.x and 3.x.
+    """
+    flux = (
+        f'from(bucket:"{INFLUX_DATABASE}")'
+        f' |> range(start:-92d)'
+        f' |> filter(fn:(r) => r._measurement == "{MEASUREMENT}")'
+        f' |> keep(columns:["_time"])'
+        f' |> sort(columns:["_time"], desc:true)'
+        f' |> limit(n:1)'
+    )
+    url = f"{INFLUX_URL}/api/v2/query?org={os.getenv('INFLUX_ORG', 'maynooth')}"
     try:
-        tables = client.query_api().query(query, org=INFLUX_ORG)
-        for table in tables:
-            for record in table.records:
-                t = record.get_time()
-                log.info(f"Latest stored timestamp: {t}")
-                return t
+        r = requests.post(
+            url,
+            data=flux,
+            headers={
+                "Authorization": f"Token {INFLUX_TOKEN}",
+                "Content-Type": "application/vnd.flux",
+                "Accept": "application/csv",
+            },
+            timeout=10,
+        )
+        r.raise_for_status()
+        for line in r.text.strip().split("\n"):
+            if line and not line.startswith("#") and "_time" not in line:
+                ts_str = line.split(",")[-1].strip()
+                if ts_str:
+                    dt = datetime.fromisoformat(ts_str.rstrip("Z") + "+00:00")
+                    log.info(f"Latest stored timestamp: {dt}")
+                    return dt
     except Exception as e:
         log.warning(f"Could not query latest timestamp: {e}")
     return None
 
 
-def write_rows(client: InfluxDBClient, rows: list[dict], since: datetime | None):
+def write_rows(client: InfluxDBClient3, rows: list[dict], since: datetime | None):
     """Write rows to InfluxDB, skipping any already stored (dedup by timestamp)."""
-    write_api = client.write_api(write_options=SYNCHRONOUS)
     points = []
     skipped = 0
 
@@ -177,7 +199,7 @@ def write_rows(client: InfluxDBClient, rows: list[dict], since: datetime | None)
         log.info("No new rows to write.")
         return 0
 
-    write_api.write(bucket=INFLUX_BUCKET, org=INFLUX_ORG, record=points)
+    client.write(record=points, write_precision="s")
     log.info(f"Wrote {len(points)} rows to InfluxDB [{MEASUREMENT}]")
     return len(points)
 
@@ -209,7 +231,12 @@ def main():
     log.info(f"Mode: {'backfill' if (args.backfill or args.from_date) else 'daily'} | past_days={past_days}")
 
     # Connect to InfluxDB
-    client = InfluxDBClient(url=INFLUX_URL, token=INFLUX_TOKEN, org=INFLUX_ORG)
+    client = InfluxDBClient3(
+        host=INFLUX_URL, 
+        token=INFLUX_TOKEN, 
+        database=INFLUX_DATABASE,
+        org=os.getenv("INFLUX_ORG", "maynooth")
+    )
 
     # Get latest stored timestamp for dedup (skip on backfill to check anyway)
     latest = get_latest_stored_time(client)
@@ -220,7 +247,6 @@ def main():
     # Write (deduped)
     written = write_rows(client, rows, since=latest)
 
-    client.close()
     log.info(f"Done. Written: {written} rows. Latest stored: {latest}")
 
     # Summary for n8n / cron log
