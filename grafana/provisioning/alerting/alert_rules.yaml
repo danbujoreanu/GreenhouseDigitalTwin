@@ -1,8 +1,14 @@
 apiVersion: 1
 
 # ── Alert Rules — Greenhouse Digital Twin ────────────────────────────────────
-# All rules evaluate every 5 minutes (aligned with poller cadence).
-# Conditions use Flux queries against InfluxDB bucket "greenhouse".
+# Stack: InfluxDB 2.7 on NUC. Flux queries. Standard Grafana alert engine.
+# Routes via n8n WF2 (webhook) → Pushover on iOS.
+# Webhook URL: http://192.168.68.119:5678/webhook/gh-alert
+#
+# Phase 2 (Mac Mini M5 + InfluxDB 3 Enterprise):
+#   Replace these 5 rules with Processing Engine plugins:
+#   threshold_check, state_change, mad_anomaly, notifier, downsampler
+#   All alerting moves into InfluxDB itself — Grafana rules become optional.
 
 groups:
 
@@ -14,13 +20,12 @@ groups:
 
       # ── 1. Botrytis Risk ──────────────────────────────────────────────────
       # LVPD below 0.4 kPa = air too humid, condensation likely on leaves
-      # Especially dangerous overnight when vents are closed
       - uid: botrytis-risk
         title: Botrytis Risk
         condition: C
         for: 10m
         annotations:
-          summary: "⚠️ GH humidity critical — LVPD {{ $values.A }} kPa. Condensation risk on leaves. Check fan is running."
+          summary: "⚠️ GH humidity critical — LVPD {{ $values.A }} kPa. Condensation risk on leaves."
           description: "LVPD has been below 0.4 kPa for 10+ minutes. Botrytis risk is HIGH."
         labels:
           severity: critical
@@ -49,7 +54,6 @@ groups:
               type: classic_conditions
 
       # ── 2. Heat Stress ────────────────────────────────────────────────────
-      # Canopy temp above 32°C = wilting risk, especially for capsicums/aubergines
       - uid: heat-stress
         title: Heat Stress
         condition: C
@@ -84,14 +88,13 @@ groups:
               type: classic_conditions
 
       # ── 3. Water Stress (high LVPD) ───────────────────────────────────────
-      # LVPD above 1.5 kPa = plants transpiring too fast, soil may be dry
       - uid: water-stress
         title: Water Stress
         condition: C
         for: 20m
         annotations:
-          summary: "💧 GH water stress — LVPD {{ $values.A }} kPa. Plants may need watering. Check soil sensors."
-          description: "LVPD has been above 1.5 kPa for 20+ minutes. Soil check recommended."
+          summary: "💧 GH water stress — LVPD {{ $values.A }} kPa. Check soil sensors."
+          description: "LVPD has been above 1.5 kPa for 20+ minutes."
         labels:
           severity: warning
           zone: canopy

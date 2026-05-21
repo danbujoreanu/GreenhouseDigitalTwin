@@ -16,6 +16,6 @@ contactPoints:
       - uid: n8n-webhook-receiver
         type: webhook
         settings:
-          url: "http://host.docker.internal:5678/webhook/gh-alert"
+          url: "http://192.168.68.119:5678/webhook/gh-alert"
           httpMethod: POST
           maxAlerts: 10
