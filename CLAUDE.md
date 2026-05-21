@@ -128,15 +128,21 @@ Without this, all `$env.PUSHOVER_GH_TOKEN` calls return `access to env vars deni
 
 ## Grafana Alert Rules (sparc-grafana, port 3001)
 
-All 5 rules in Folder: `Gardening`, provisioned 2026-05-19.
+All 7 rules in Folder: `Gardening`, provisioned 2026-05-19/21.
 
-| UID | Alert | Threshold | Condition |
-|-----|-------|-----------|-----------|
-| `gh-alert-lvpd-stress` | LVPD stress | lvpd_kpa > 2.0 | 5 min |
-| `gh-alert-lvpd-humid` | LVPD low (humid) | lvpd_kpa < 0.2 | 5 min |
-| `gh-alert-frost-risk` | Frost risk | temperature_c < 5.0 | 5 min |
-| `gh-alert-heat-stress` | Heat stress | temperature_c > 35.0 | 5 min |
-| `gh-alert-soil-dry` | Soil dry | moisture_pct < 25.0 | 10 min |
+| UID | Alert | Threshold | Condition | `for:` |
+|-----|-------|-----------|-----------|--------|
+| `gh-alert-lvpd-stress` | LVPD stress | lvpd_kpa > 2.0 | 5 min | — |
+| `gh-alert-lvpd-humid` | LVPD low (humid) | lvpd_kpa < 0.2 | 5 min | — |
+| `gh-alert-frost-risk` | Frost risk | temperature_c < 5.0 | 5 min | — |
+| `gh-alert-heat-stress` | Heat stress | temperature_c > 35.0 | 5 min | — |
+| `gh-alert-soil-dry` | Soil dry | moisture_pct < 25.0 | 10 min | — |
+| `gh-alert-sensor-stale` | WH31 canopy stale | count(canopy readings) < 1 in -35m | immediate | `noDataState: Alerting` |
+| `gh-alert-high-rh-3h` | RH sustained high | mean RH > 85% in -10m | 3 hours sustained | `for: "3h"` |
+
+**`gh-alert-sensor-stale`**: catches WH31 battery death / sensor offline. noDataState=Alerting means it fires even if InfluxDB returns no rows at all.
+
+**`gh-alert-high-rh-3h`**: botrytis risk flag — alerts only if RH stays above 85% continuously for 3h, avoiding false positives from brief humidity spikes.
 
 See `Explainers/GRAFANA_EXPLAINED.md` §Alert Rules for full Flux queries and troubleshooting.
 
