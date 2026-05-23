@@ -4,12 +4,16 @@ Ecowitt Cloud API → InfluxDB Poller
 Maynooth Homestead Digital Twin — Phase 1 (Cloud polling)
 
 Polls Ecowitt Cloud API every N seconds, calculates LVPD,
-and writes all sensor data to InfluxDB 2.x.
+and writes all sensor data to InfluxDB 3.
 
 Sensors expected:
   - WH31: greenhouse canopy temp + RH
   - WH51 × 2: soil moisture (GH4N = ch1, GH4S = ch2)
   - GW3000: outdoor temp + RH (reference only)
+
+IoT actuators polled each cycle (local LAN — no cloud):
+  - AC1100 WittSwitch (device 12592): fan relay state, power draw
+    Written to measurement: greenhouse_actuators
 """
 
 import os
@@ -18,9 +22,7 @@ import math
 import logging
 import requests
 from datetime import datetime, timezone
-from influxdb_client import InfluxDBClient, Point
-WritePrecision_S = "s"  # influxdb-client >=1.36 dropped the SECONDS constant
-from influxdb_client.client.write_api import SYNCHRONOUS
+from influxdb_client_3 import InfluxDBClient3, Point
 
 logging.basicConfig(
     level=logging.INFO,
@@ -35,11 +37,16 @@ ECOWITT_API_KEY = os.environ["ECOWITT_API_KEY"]
 DEVICE_MAC      = os.environ["ECOWITT_DEVICE_MAC"]
 INFLUX_URL      = os.environ["INFLUX_URL"]
 INFLUX_TOKEN    = os.environ["INFLUX_TOKEN"]
-INFLUX_ORG      = os.environ["INFLUX_ORG"]
-INFLUX_BUCKET   = os.environ["INFLUX_BUCKET"]
+INFLUX_DATABASE = os.environ.get("INFLUX_DATABASE", "greenhouse")
+INFLUX_ORG      = os.environ.get("INFLUX_ORG", "maynooth")   # required for InfluxDB 2.7
 POLL_INTERVAL   = int(os.environ.get("POLL_INTERVAL_SECONDS", 300))
 
 ECOWITT_BASE = "https://api.ecowitt.net/api/v3"
+
+# ── IoT actuator config (local LAN — no cloud) ────────────────────────────────
+GW3000_IP        = os.environ.get("GW3000_IOT_IP", "192.168.68.107")
+AC1100_DEVICE_ID = int(os.environ.get("AC1100_DEVICE_ID", "12592"))
+AC1100_MODEL     = 2   # Ecowitt model int for AC1100 WittSwitch
 
 
 # ── PsychrometricEngine ───────────────────────────────────────────────────────
@@ -122,11 +129,62 @@ def safe_float(d: dict, *keys) -> float | None:
         return None
 
 
+# ── AC1100 WittSwitch IoT polling ────────────────────────────────────────────
+
+def poll_ac1100() -> Point | None:
+    """
+    Read AC1100 WittSwitch state via GW3000 local IoT API.
+    Returns an InfluxDB Point for measurement 'greenhouse_actuators', or None on failure.
+
+    No cloud dependency — purely local LAN call to GW3000 at 192.168.68.107.
+    The GW3000 returns cached state even when AC1100 is RF-offline; always check
+    the 'warning' field (bit 7 = 128 = offline) before trusting ac_status.
+    """
+    url = f"http://{GW3000_IP}/parse_quick_cmd_iot"
+    payload = {"command": [{"cmd": "read_device", "id": AC1100_DEVICE_ID, "model": AC1100_MODEL}]}
+    try:
+        r = requests.post(url, json=payload, timeout=5)
+        r.raise_for_status()
+        d = r.json()["command"][0]
+
+        now_ts    = int(time.time())
+        pub_age   = now_ts - d.get("publish_time", 0)
+        offline   = bool(d.get("warning", 0) & 128)   # bit 7 = device offline
+        stale     = pub_age > 300                       # >5 min since last RF report
+
+        fan_on    = int(d.get("ac_status", 0))
+        power_w   = float(d.get("realtime_power", 0))
+        voltage_v = float(d.get("ac_voltage", 0))
+        rssi_dbm  = float(d.get("gw_rssi", 0))
+
+        log.info(
+            "AC1100  → fan=%s  power=%.0fW  voltage=%.0fV  rssi=%ddBm  offline=%s  stale=%s",
+            "ON" if fan_on else "OFF", power_w, voltage_v, rssi_dbm, offline, stale
+        )
+
+        return (
+            Point("greenhouse_actuators")
+            .tag("device",   "AC1100")
+            .tag("location", "GH6S")
+            .field("fan_on",     fan_on)
+            .field("power_w",    power_w)
+            .field("voltage_v",  voltage_v)
+            .field("rssi_dbm",   rssi_dbm)
+            .field("rf_offline", int(offline))
+            .field("rf_stale",   int(stale))
+            .time(datetime.now(timezone.utc), "s")
+        )
+
+    except Exception as e:
+        log.warning("AC1100 poll failed (non-fatal): %s", e)
+        return None
+
+
 # ── InfluxDB writer ───────────────────────────────────────────────────────────
 
-def write_to_influx(write_api, points: list[Point]) -> None:
+def write_to_influx(client: InfluxDBClient3, points: list[Point]) -> None:
     try:
-        write_api.write(bucket=INFLUX_BUCKET, org=INFLUX_ORG, record=points)
+        client.write(record=points, write_precision="s")
         log.info("Wrote %d point(s) to InfluxDB", len(points))
     except Exception as e:
         log.error("InfluxDB write failed: %s", e)
@@ -151,7 +209,7 @@ def parse_and_build_points(data: dict) -> list[Point]:
             .tag("location", "garden_outside")
             .field("temperature_c", out_temp)
             .field("humidity_pct", out_rh)
-            .time(ts, WritePrecision_S)
+            .time(ts, "s")
         )
         points.append(p)
 
@@ -176,7 +234,7 @@ def parse_and_build_points(data: dict) -> list[Point]:
             .field("humidity_pct", gh_rh)
             .field("lvpd_kpa", lvpd_val)
             .field("lvpd_zone", zone)
-            .time(ts, WritePrecision_S)
+            .time(ts, "s")
         )
         points.append(p)
         log.info(
@@ -206,7 +264,7 @@ def parse_and_build_points(data: dict) -> list[Point]:
                 .tag("sensor", "WH51")
                 .tag("zone", label)
                 .field("moisture_pct", moisture)
-                .time(ts, WritePrecision_S)
+                .time(ts, "s")
             )
             points.append(p)
             log.info("Soil %s → %.0f%%", label, moisture)
@@ -217,17 +275,17 @@ def parse_and_build_points(data: dict) -> list[Point]:
 
 
 def main():
-    log.info("=== Maynooth Greenhouse Poller starting ===")
+    log.info("=== Maynooth Greenhouse Poller starting (InfluxDB 3) ===")
     log.info("Ecowitt device MAC : %s", DEVICE_MAC)
-    log.info("InfluxDB           : %s  bucket=%s", INFLUX_URL, INFLUX_BUCKET)
+    log.info("InfluxDB           : %s  database=%s", INFLUX_URL, INFLUX_DATABASE)
     log.info("Poll interval      : %ds", POLL_INTERVAL)
 
-    influx_client = InfluxDBClient(
-        url=INFLUX_URL,
+    influx_client = InfluxDBClient3(
+        host=INFLUX_URL,
         token=INFLUX_TOKEN,
+        database=INFLUX_DATABASE,
         org=INFLUX_ORG,
     )
-    write_api = influx_client.write_api(write_options=SYNCHRONOUS)
 
     # Wait briefly for InfluxDB to be fully ready
     time.sleep(5)
@@ -243,11 +301,17 @@ def main():
             )
             points = parse_and_build_points(data)
             if points:
-                write_to_influx(write_api, points)
+                write_to_influx(influx_client, points)
             else:
                 log.warning("No valid data points parsed — check sensor channel names above")
         else:
             log.warning("No data from Ecowitt — will retry next cycle")
+
+        # ── Poll AC1100 actuator state (local IoT API — independent of cloud) ──
+        log.info("── Polling AC1100 WittSwitch ──")
+        ac_point = poll_ac1100()
+        if ac_point:
+            write_to_influx(influx_client, [ac_point])
 
         time.sleep(POLL_INTERVAL)
 
